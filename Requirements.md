@@ -16,6 +16,7 @@ Build a modern outbound email service that:
 
 - lets a customer create and verify a sending domain
 - lets a customer send email through a GraphQL API
+- operates its own self-hosted outbound delivery layer
 - supports plain text and HTML emails
 - supports common headers and metadata needed for real-world use
 - records message lifecycle state for observability and support tooling
@@ -33,7 +34,7 @@ A customer signs up, proves ownership of `example.com`, configures the required 
 - one-off emails
 - programmatic emails from applications and backends
 
-The system accepts the request, validates it, creates a durable message record, queues the message for delivery, attempts delivery through the provider’s sending pipeline, and exposes status back to the customer through GraphQL queries.
+The system accepts the request, validates it, creates a durable message record, queues the message for delivery, attempts delivery through its own outbound delivery pipeline, and exposes status back to the customer through GraphQL queries.
 
 ---
 
@@ -52,6 +53,8 @@ The following are out of scope for this version:
 - multi-region deployment
 - customer webhooks for delivery events
 - attachments are out of scope for v1
+- third-party cloud email delivery integrations
+- managed cloud queue services
 
 Note: a basic admin/customer configuration UI is in scope. Only broader marketing and advanced product surfaces are out of scope.
 
@@ -84,12 +87,14 @@ The application stack must use:
 - GraphQL Yoga
 - better-auth for customer authentication and API-key lifecycle management
 - Pothos as the GraphQL schema builder
-- Drizzle ORM for persistence
+- Drizzle ORM for PostgreSQL persistence
+- PostgreSQL as the database
+- Graphile Worker as the async job queue
 - Drizzle Relational Queries v2 (beta) for relational reads
 - Tailwind CSS for utility-first styling
 - daisyUI for component-level styling primitives on top of Tailwind CSS
 
-TanStack Start is the required application framework for the monolith and must host the customer-facing application and GraphQL API surface. React is the UI runtime. Relay is the required GraphQL client for app-side data access. better-auth is the required authentication system for signup, sign-in, sign-out, session handling, and API-key management. GraphQL Yoga must serve the generated schema. Tailwind CSS is the required styling foundation, and daisyUI is the required component class system. Pothos generates a standard GraphQL schema, and Drizzle RQB v2 is the required relational query layer for nested and related reads.
+TanStack Start is the required application framework for the monolith and must host the customer-facing application and GraphQL API surface. React is the UI runtime. Relay is the required GraphQL client for app-side data access. better-auth is the required authentication system for signup, sign-in, sign-out, session handling, and API-key management. GraphQL Yoga must serve the generated schema. PostgreSQL is the required database. Graphile Worker is the required async job queue and must be backed by the same PostgreSQL deployment. Tailwind CSS is the required styling foundation, and daisyUI is the required component class system. Pothos generates a standard GraphQL schema, and Drizzle RQB v2 is the required relational query layer for nested and related reads.
 
 ### 5.3 Runtime and deployment target
 
@@ -102,6 +107,7 @@ Requirements:
 - v1 must ship as a single deployable Node.js application bundle
 - background job handlers are logical components within that same deployable bundle in v1
 - configuration must come from validated environment variables suitable for Node.js and containerized deployments
+- v1 must not depend on third-party cloud services for email delivery or queueing
 
 ### 5.4 Code quality
 
@@ -122,6 +128,7 @@ This means:
 - stateless API processes
 - durable persistence for state transitions
 - queue-backed async delivery flow
+- self-hosted outbound delivery flow
 - idempotent job handling
 - no reliance on in-memory state for correctness
 - clear separation between GraphQL transport, domain logic, persistence, and workers
@@ -141,7 +148,7 @@ The system consists of these logical areas:
 7. DNS verification and domain readiness checks
 8. outbound message submission API
 9. durable message persistence
-10. async delivery pipeline
+10. Graphile Worker-backed async delivery pipeline
 11. message status tracking
 12. suppression and safety controls
 13. internal observability and operational tooling
@@ -233,7 +240,7 @@ A sending domain includes:
 - status
 - DKIM configuration
 - SPF guidance metadata
-- optional return-path or bounce-domain metadata when the v1 transport supports it
+- return-path or bounce-domain metadata for the self-hosted outbound layer
 - timestamps
 
 Domain statuses must be explicit.
@@ -307,7 +314,7 @@ The request must support at least:
 - optional `replyTo`
 - optional custom headers
 - optional idempotency key
-- optional provider-side metadata tags
+- optional service-defined metadata tags
 
 Rules:
 
@@ -339,13 +346,13 @@ Requirements:
 
 ## 7.10 Durable acceptance model
 
-The system must not claim success only because an upstream SMTP or provider API handoff succeeded.
+The system must not claim success only because an internal handoff to the outbound transport layer succeeded.
 
 Instead:
 
 - accept the request only after validation and durable persistence
 - create a message record with initial status such as `accepted`
-- enqueue delivery work
+- enqueue delivery work through Graphile Worker
 - return a message identifier immediately after durable acceptance
 
 ## 7.11 Delivery pipeline
@@ -354,14 +361,15 @@ Message delivery must happen asynchronously.
 
 Requirements:
 
+- delivery jobs must be scheduled and executed through Graphile Worker
 - queued job per accepted message
-- worker process claims jobs safely
+- Graphile Worker claims jobs safely
 - worker loads message and account/domain context
 - worker performs final send eligibility checks
 - worker renders transport payload
 - worker attempts delivery
 - worker updates message state
-- worker records provider response identifiers
+- worker records outbound transport response metadata
 
 The delivery system must be safe under multiple worker instances.
 
@@ -374,7 +382,7 @@ Minimum states:
 - `accepted`
 - `queued`
 - `processing`
-- `sent_to_provider`
+- `sent_to_outbound_layer`
 - `failed`
 - `suppressed`
 - `rejected`
@@ -396,8 +404,8 @@ At minimum:
 - authorization failure
 - domain not verified
 - suppression rejection
-- provider temporary failure
-- provider permanent failure
+- outbound transport temporary failure
+- outbound transport permanent failure
 - internal unexpected failure
 
 The system must persist machine-readable failure codes and a user-safe message.
@@ -560,7 +568,7 @@ Requirements:
 
 ## 9. Data model requirements
 
-The exact database is not mandated here, but the schema must support the following entities.
+The persistence layer must use PostgreSQL, and the schema must support the following entities.
 
 Authentication and session persistence are delegated to better-auth and do not need to be standardized by this document beyond the account and API-key integration requirements below.
 
@@ -638,7 +646,7 @@ Fields:
 - headersJson
 - tagsJson
 - status
-- providerMessageId
+- outboundMessageId
 - failureCode
 - failureMessage
 - acceptedAt
@@ -672,8 +680,8 @@ Fields:
 - startedAt
 - endedAt
 - outcome
-- providerResponseCode
-- providerResponseSummary
+- transportResponseCode
+- transportResponseSummary
 - errorCode
 - errorDetailsJson
 
@@ -703,23 +711,15 @@ Fields:
 - detailsJson
 - createdAt
 
-## 9.10 QueueJob
+## 9.10 GraphileWorker
 
-If jobs are persisted in the main database, the schema must support:
+Graphile Worker is required for async job execution.
 
-- id
-- type
-- payloadJson
-- status
-- availableAt
-- lockedAt
-- lockToken
-- attempts
-- maxAttempts
-- createdAt
-- updatedAt
+Requirements:
 
-If a separate queue system is used, the service still needs equivalent logical behavior.
+- the PostgreSQL deployment must include the Graphile Worker schema and migrations
+- delivery jobs must be enqueued through Graphile Worker
+- application code must integrate with Graphile Worker task execution, retries, and scheduling semantics
 
 ---
 
@@ -759,7 +759,7 @@ The following must be treated as secrets:
 
 - API keys
 - DKIM private keys
-- provider credentials
+- outbound transport credentials
 
 Secrets must not be logged.
 
@@ -800,7 +800,7 @@ Optional in v1:
 
 - metrics counters for accepts, rejects, retries, failures
 - latency histograms
-- queue depth metrics
+- Graphile Worker queue depth metrics
 
 ---
 
@@ -819,7 +819,7 @@ Required logical layering:
 - `schemas/`: runtime validation schemas and derived types
 - `services/`: business logic
 - `repos/`: persistence access
-- `workers/`: async job handlers
+- `workers/`: Graphile Worker task handlers
 - `lib/`: shared utilities
 - `config/`: typed config loading
 - `styles/`: global Tailwind entrypoints and daisyUI theme customization
@@ -834,6 +834,7 @@ Rules:
 - services must not depend on GraphQL-, Relay-, or React-specific objects
 - repositories must not contain business policy
 - worker logic must reuse service-layer code instead of reimplementing business rules
+- Graphile Worker must be the only async job mechanism used for delivery jobs
 - Drizzle RQB v2 must be used for relational reads that naturally map to nested GraphQL query shapes
 - shared UI styling must primarily use Tailwind utility classes plus daisyUI component classes
 - custom CSS is allowed only for cases that are hard to express with Tailwind and daisyUI
@@ -852,7 +853,7 @@ Requirements:
 - worker instances are stateless
 - Relay environment behavior must not be relied on for correctness on the server side
 - all durable state lives in shared persistence
-- queue semantics support multiple consumers safely
+- Graphile Worker queue semantics must support multiple consumers safely
 - retries are idempotent
 - duplicate processing is tolerated safely
 - rate limiting must not rely on in-memory per-process counters for correctness
@@ -885,25 +886,26 @@ Critical scenarios to test:
 - session-authenticated admin operations succeed
 - API-key-authenticated `sendMessage` succeeds when the account and domain are valid
 - session-only operations reject API-key authentication
-- retryable provider failure is retried
-- non-retryable provider failure becomes terminal
+- retryable outbound transport failure is retried
+- non-retryable outbound transport failure becomes terminal
 - one account cannot read another account’s messages
 
 ---
 
-## 15. Delivery provider abstraction
+## 15. Outbound transport layer
 
 The code must not hard-wire transport logic directly into GraphQL resolvers or general business logic.
 
-Define a provider abstraction that preserves future support for:
+Define an internal outbound transport abstraction that preserves future support for:
 
 - direct SMTP
-- third-party mail APIs
 - internal MTA pipeline
 
-The provider interface must expose typed outcomes such as:
+The system must not rely on third-party cloud email providers for message delivery.
 
-- success with provider message id
+The outbound transport interface must expose typed outcomes such as:
+
+- success with outbound message id
 - temporary failure
 - permanent failure
 - misconfiguration failure
@@ -916,9 +918,9 @@ Assume:
 
 - one deployed Node.js application bundle initially
 - one containerized deployment model initially
-- one relational database initially
-- one async queue mechanism initially
-- one delivery provider implementation initially
+- one PostgreSQL database initially
+- one Graphile Worker queue initially
+- one self-hosted outbound delivery implementation initially
 - the React UI does not need advanced polish in v1, but it must cover the required admin and customer workflows
 - application code must run correctly in the required Node.js runtime
 
@@ -1054,7 +1056,7 @@ Create the base authenticated shell, navigation, and route guards for the admin/
 ## Phase C — persistence foundation
 
 ### T33. Select and wire database access layer
-Introduce the database layer and shared connection/bootstrap code.
+Introduce the PostgreSQL database layer and shared connection/bootstrap code.
 
 ### T34. Add migration system
 Set up schema migration tooling and scripts.
@@ -1086,8 +1088,8 @@ Add the suppressions schema.
 ### T43. Create audit_logs table
 Add the audit logs schema.
 
-### T44. Create queue_jobs table or define the persistent queue contract
-Add the persistent queue job representation used by the chosen queue implementation.
+### T44. Integrate Graphile Worker schema and configuration
+Add Graphile Worker setup, migrations, and runtime configuration backed by PostgreSQL.
 
 ### T45. Define Drizzle relations
 Declare all table relations needed by Drizzle RQB v2.
@@ -1124,8 +1126,8 @@ Add typed persistence functions for suppression checks and mutations.
 ### T55. Implement audit log repository
 Add typed persistence functions for audit events.
 
-### T56. Implement queue repository or queue adapter
-Add typed enqueue, claim, ack, retry, and fail operations.
+### T56. Implement Graphile Worker enqueue integration
+Add typed enqueue helpers and Graphile Worker integration for delivery jobs.
 
 ## Phase E — schema and API contracts
 
@@ -1217,38 +1219,38 @@ Check whether the request has already been accepted for the same scope.
 Check whether any intended recipient is suppressed.
 
 ### T84. Implement message acceptance service
-Persist the message, recipients, initial status, and enqueue a delivery job.
+Persist the message, recipients, initial status, and enqueue a delivery job through Graphile Worker.
 
 ### T85. Implement acceptance transaction boundary
 Ensure message creation and job enqueueing happen atomically or with equivalent correctness guarantees.
 
-## Phase I — delivery provider abstraction
+## Phase I — outbound transport layer
 
-### T86. Define delivery provider interface
-Create the typed abstraction that the worker uses for sending.
+### T86. Define outbound transport interface
+Create the typed abstraction that the worker uses to hand messages to the self-hosted outbound delivery layer.
 
-### T87. Implement initial provider adapter
-Implement the first concrete provider adapter.
+### T87. Implement initial outbound transport adapter
+Implement the first concrete adapter for the self-hosted outbound delivery layer.
 
-### T88. Map provider responses to internal outcomes
-Normalize provider-specific outcomes into typed success/failure categories.
+### T88. Map outbound transport responses to internal outcomes
+Normalize outbound transport outcomes into typed success and failure categories.
 
 ## Phase J — worker and queue processing
 
-### T89. Implement queue claim loop
-Create the worker loop that safely claims available jobs.
+### T89. Integrate Graphile Worker runner
+Create the Graphile Worker runtime wiring that executes delivery jobs safely.
 
 ### T90. Implement message-delivery worker handler
-Load message context and run the send pipeline.
+Load message context and run the outbound delivery pipeline.
 
 ### T91. Implement final eligibility re-check before send
 Re-check domain status, suppression, and terminal-state safety immediately before delivery.
 
 ### T92. Implement delivery attempt recording
-Record each provider send attempt with timestamps and result metadata.
+Record each outbound delivery attempt with timestamps and result metadata.
 
 ### T93. Implement success transition handling
-Update message status and provider message ID on success.
+Update message status and outbound message ID on success.
 
 ### T94. Implement retry scheduling for transient failures
 Reschedule transient failures with capped exponential backoff.
@@ -1459,8 +1461,8 @@ The v1 implementation is considered complete when all of the following are true:
 - DKIM configuration exists and is usable for signing
 - an authenticated customer can submit an outbound email through GraphQL
 - the system persists the message durably before acknowledging success
-- the system enqueues asynchronous delivery work
-- a worker can deliver the message through the provider abstraction
+- the system enqueues asynchronous delivery work through Graphile Worker
+- a worker can deliver the message through the self-hosted outbound transport layer
 - message state transitions are persisted and queryable
 - suppressed recipients are blocked
 - idempotency prevents duplicate accepted sends for the same request scope
@@ -1485,6 +1487,7 @@ When implementing, optimize for:
 - TanStack Start wiring that stays thin and replaceable
 - better-auth integration that stays thin and replaceable
 - portable Node runtime code
+- self-hosted infrastructure choices that avoid third-party cloud delivery dependencies
 - code that fits a single consistent containerized deployment model without redesigning the core domain model
 
 ---
