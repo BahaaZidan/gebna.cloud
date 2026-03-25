@@ -4,7 +4,7 @@
 
 This document defines the implementation requirements for the first Gebna Cloud service: a simple outbound email platform.
 
-The service exposes an HTTP API that allows authenticated customers to send arbitrary email messages to arbitrary recipients, provided the customer has verified and configured a sending domain.
+The service exposes a GraphQL API over HTTP that allows authenticated customers to send arbitrary email messages to arbitrary recipients, provided the customer has verified and configured a sending domain.
 
 This document is intentionally implementation-oriented. It excludes billing, pricing, landing pages, marketing pages, and other go-to-market material. It is meant to be handed to a coding agent and implemented in small, reviewable tasks.
 
@@ -15,7 +15,7 @@ This document is intentionally implementation-oriented. It excludes billing, pri
 Build a modern outbound email service that:
 
 - lets a customer create and verify a sending domain
-- lets a customer send email through a simple HTTP API
+- lets a customer send email through a GraphQL API
 - supports plain text and HTML emails
 - supports common headers and metadata needed for real-world use
 - records message lifecycle state for observability and later support tooling
@@ -33,7 +33,7 @@ A customer signs up, proves ownership of `example.com`, configures the required 
 - one-off emails
 - programmatic emails from applications and backends
 
-The system accepts the request, validates it, creates a durable message record, queues the message for delivery, attempts delivery through the provider’s sending pipeline, and exposes status back to the customer through API endpoints.
+The system accepts the request, validates it, creates a durable message record, queues the message for delivery, attempts delivery through the provider’s sending pipeline, and exposes status back to the customer through GraphQL queries.
 
 ---
 
@@ -46,7 +46,7 @@ The following are out of scope for this version:
 - landing pages and public marketing pages
 - inbound email receiving
 - mailbox hosting
-- template buil([tanstack.com](https://tanstack.com/start/v0/docs/framework/react/overview?utm_source=chatgpt.com))rds
+- template builders
 - dedicated IP purchase flows
 - reseller features
 - multi-region deployment
@@ -68,7 +68,7 @@ The system must use:
 - no `any`
 - ESLint
 - Prettier
-- Vite fo([pothos-graphql.dev](https://pothos-graphql.dev/docs/guide?utm_source=chatgpt.com))pplicable
+- Vite where applicable
 
 ### 5.2 Required application stack
 
@@ -78,13 +78,14 @@ The application stack must use:
 - React for the UI layer
 - Relay as the GraphQL client
 - GraphQL API
+- better-auth for customer authentication and API-key lifecycle management
 - Pothos as the GraphQL schema builder
 - Drizzle ORM for persistence
 - Drizzle Relational Queries v2 (beta) for relational reads
 - Tailwind CSS for utility-first styling
 - daisyUI for component-level styling primitives on top of Tailwind CSS
 
-TanStack Start is the required application framework for the monolith and should host the customer-facing app/API surface. React is the UI runtime. Relay is the required GraphQL client for app-side data access. Tailwind CSS is the required styling foundation, and daisyUI is the required component class system. Pothos generates a standard GraphQL schema, and Drizzle RQB v2 is the required relational query layer for nested/related reads. 
+TanStack Start is the required application framework for the monolith and should host the customer-facing app/API surface. React is the UI runtime. Relay is the required GraphQL client for app-side data access. better-auth is the required authentication system for signup, sign-in, sign-out, session handling, and API-key management. Tailwind CSS is the required styling foundation, and daisyUI is the required component class system. Pothos generates a standard GraphQL schema, and Drizzle RQB v2 is the required relational query layer for nested/related reads.
 
 ### 5.3 Code quality
 
@@ -118,7 +119,7 @@ The system consists of these logical areas:
 1. TanStack Start application shell
 2. React admin/customer configuration UI
 3. Relay environment, queries, mutations, and fragments
-4. authentication and API keys
+4. better-auth-backed authentication and API keys
 5. account and project ownership model
 6. sending domain management
 7. DNS verification and domain readiness checks
@@ -137,6 +138,12 @@ The system consists of these logical areas:
 ## 7.0 Basic admin/customer UI
 
 The system must include a basic authenticated UI that allows a user to configure and inspect the service without calling GraphQL manually.
+
+UI auth rules for v1:
+
+- the frontend talks directly to better-auth only for signup, sign-in, sign-out, and session lifecycle flows
+- all product data fetching and product mutations after authentication must go through GraphQL
+- GraphQL resolvers may call the server-side better-auth instance for API-key management and account identity lookup
 
 Minimum UI scope in v1:
 
@@ -172,16 +179,19 @@ Each account owns:
 - suppression entries
 - audit-relevant actions
 
-The exact signup flow is out of scope, but the domain model must assume a stable account identifier exists.
+For v1, each authenticated better-auth user maps to exactly one account.
+
+The exact signup UX may remain thin, but better-auth-backed signup, sign-in, and sign-out flows are in scope because the admin/customer UI requires them.
 
 ## 7.2 API authentication
 
-The system must support API-key-based authentication for outbound API access.
+The system must support API-key-based authentication for outbound GraphQL access.
 
 Requirements:
 
 - each API key belongs to one account
-- API keys must be stored hashed, never in plaintext after creation
+- API-key lifecycle management must be implemented through the better-auth server instance and its API-key capability
+- API keys must be stored hashed or otherwise non-recoverably protected by better-auth, never in plaintext after creation
 - the full key value is shown only once at creation time
 - each API key has a display name
 - each API key can be revoked
@@ -220,7 +230,7 @@ Requirements:
 
 - generate verification records for the customer
 - provide exact DNS instructions through API responses
-- periodically re-check DNS until verification succeeds or the user retries manually
+- allow manual DNS re-checks in v1
 - persist last verification result
 - persist timestamps for checks
 
@@ -257,7 +267,7 @@ Requirements:
 
 ## 7.7 Message submission
 
-The service must expose an HTTP endpoint for sending messages.
+The service must expose a GraphQL mutation over HTTP for sending messages.
 
 The request must support at least:
 
@@ -441,19 +451,23 @@ The response must not leak internal-only details or data belonging to another ac
 
 ## 8.1 API style
 
-Use GraphQL served from the TanStack Start application.
+Use GraphQL served from the TanStack Start application as the default product API surface.
 
 Requirements:
 
-- GraphQL endpoint for customer-facing API access
+- GraphQL endpoint for customer-facing product API access
 - Pothos as the schema builder
 - Relay-compatible schema design
 - versioned schema change discipline even if the HTTP endpoint path is not versioned
 - predictable typed error model
 - stable field naming
 - separation between GraphQL layer and service layer
+- GraphQL is the default interface for all product reads and writes unless a requirement explicitly says otherwise
+- signup, sign-in, sign-out, and session lifecycle flows are the allowed v1 exception and are handled through better-auth endpoints
 
 The generated Pothos schema should be a plain GraphQL schema that can be served by a compatible GraphQL server implementation.
+
+GraphQL is the north star for this codebase. Auth flows may use better-auth directly, but all post-authentication product interactions must use GraphQL.
 
 ## 8.2 Relay-oriented schema rules
 
@@ -466,8 +480,6 @@ Requirements:
 - mutation payloads should be explicit and predictable for Relay consumers
 - use connection-style pagination for list fields where Relay pagination hooks are expected
 
-Relay treats GraphQL Connections as the best-practice pagination model and provides first-class support for them. ([relay.dev](https://relay.dev/?utm_source=chatgpt.com))
-
 ## 8.3 Mutation and query surface required in v1
 
 Minimum GraphQL surface:
@@ -475,6 +487,7 @@ Minimum GraphQL surface:
 Mutations:
 
 - `createApiKey`
+- `revokeApiKey`
 - `createDomain`
 - `verifyDomain`
 - `sendMessage`
@@ -483,6 +496,7 @@ Mutations:
 
 Queries:
 
+- `apiKeys`
 - `domains`
 - `domain(id)`
 - `messages`
@@ -514,6 +528,8 @@ Requirements:
 
 The exact database is not mandated here, but the schema must support the following entities.
 
+Authentication and session persistence are delegated to better-auth and do not need to be standardized by this document beyond the account and API-key integration requirements below.
+
 ## 9.1 Account
 
 Fields:
@@ -535,6 +551,8 @@ Fields:
 - createdAt
 - revokedAt
 - lastUsedAt
+
+If better-auth manages API-key persistence directly, equivalent fields and behavior are acceptable even if the physical table shape or naming differs.
 
 ## 9.3 Domain
 
@@ -671,8 +689,9 @@ If a separate queue system is used, the service still needs equivalent logical b
 
 ## 10.1 Authentication
 
-- all customer API endpoints require authentication except flows explicitly meant for signup or bootstrap
-- API key lookup must compare against a hash, not plaintext
+- all customer product API endpoints require authentication except flows explicitly meant for signup, sign-in, sign-out, or bootstrap
+- better-auth is the source of truth for customer session authentication and API-key authentication
+- API key lookup and verification must be delegated to better-auth or an equivalent server-side better-auth primitive, not to plaintext comparison
 
 ## 10.2 Authorization
 
@@ -751,6 +770,7 @@ The codebase must be organized into clear layers.
 Suggested layering:
 
 - `app/`: TanStack Start routes, request handling, and application wiring
+- `auth/`: better-auth server/client setup, auth adapters, and auth helpers
 - `components/`: React UI components
 - `features/`: UI feature modules for domains, messages, API keys, and suppressions
 - `relay/`: Relay environment, query loaders, shared fragment helpers, and network layer
@@ -767,6 +787,7 @@ Rules:
 
 - TanStack Start route handlers should stay thin
 - React components should fetch through Relay, not ad hoc fetch wrappers
+- React auth flows should use better-auth client APIs directly only for signup, sign-in, sign-out, and session lifecycle operations
 - Relay queries should be fragment-driven where practical
 - services should not depend on GraphQL-, Relay-, or React-specific objects
 - repositories should not contain business policy
@@ -918,7 +939,7 @@ Create the initial React app shell and shared layout primitives.
 Configure Tailwind CSS in the app using the Vite-oriented integration path.
 
 ### T13. Add daisyUI setup
-Configure daisyUI as a Tailwind plugin and define the initial theme strategy. Tailwind documents Vite-based setup, and daisyUI documents itself as a Tailwind CSS plugin that provides higher-level component class names. ([tailwindcss.com](https://tailwindcss.com/docs?utm_source=chatgpt.com))
+Configure daisyUI as a Tailwind plugin and define the initial theme strategy.
 
 ### T14. Add GraphQL server bootstrap
 Create the GraphQL server bootstrap and wire it to the app runtime.
@@ -950,9 +971,6 @@ Create typed pagination input and output primitives for list queries.
 Create shared parsing and validation utilities for email addresses.
 
 ### T23. Add domain parser/validator
-Create shared parsing and validation utilities for domain names.
-Create shared parsing and validation utilities for domain names.
-Create shared parsing and validation utilities for domain names.
 Create shared parsing and validation utilities for domain names.
 
 ## Phase B.5 — GraphQL and Relay foundation
@@ -995,8 +1013,8 @@ Set up schema migration tooling and scripts.
 ### T35. Create accounts table
 Add the initial accounts schema.
 
-### T36. Create api_keys table
-Add the API keys schema.
+### T36. Provision API-key persistence for better-auth
+Add the API-key persistence schema or compatibility contract required by better-auth.
 
 ### T37. Create domains table
 Add the domains schema.
@@ -1030,339 +1048,342 @@ Wire `drizzle()` initialization so RQB v2 relational reads are available.
 
 ## Phase D — repository layer
 
-### T29. Implement account repository
+### T47. Implement account repository
 Add typed persistence functions for accounts.
 
-### T30. Implement API key repository
-Add typed persistence functions for API key creation, lookup, revocation, and last-used tracking.
+### T48. Implement API key adapter
+Add the typed adapter layer that GraphQL resolvers use for API key creation, lookup, revocation, listing, and last-used tracking via better-auth.
 
-### T31. Implement domain repository
+### T49. Implement domain repository
 Add typed persistence functions for domain lifecycle operations.
 
-### T32. Implement DKIM selector repository
+### T50. Implement DKIM selector repository
 Add typed persistence functions for DKIM selectors.
 
-### T33. Implement message repository
+### T51. Implement message repository
 Add typed persistence functions for message creation, reads, and status transitions.
 
-### T34. Implement message recipient repository
+### T52. Implement message recipient repository
 Add typed persistence functions for recipient rows.
 
-### T35. Implement delivery attempt repository
+### T53. Implement delivery attempt repository
 Add typed persistence functions for delivery attempt rows.
 
-### T36. Implement suppression repository
+### T54. Implement suppression repository
 Add typed persistence functions for suppression checks and mutations.
 
-### T37. Implement audit log repository
+### T55. Implement audit log repository
 Add typed persistence functions for audit events.
 
-### T38. Implement queue repository or queue adapter
+### T56. Implement queue repository or queue adapter
 Add typed enqueue, claim, ack, retry, and fail operations.
 
 ## Phase E — schema and API contracts
 
-### T54. Define shared API error schema
+### T57. Define shared API error schema
 Add runtime schemas and types for standard error envelopes.
 
-### T55. Define GraphQL object types for API keys
+### T58. Define GraphQL object types for API keys
 Add Pothos object types and payload types for API key operations.
 
-### T56. Define GraphQL object and input types for domains
+### T59. Define GraphQL object and input types for domains
 Add Pothos object, enum, and input types for domain operations.
 
-### T57. Define GraphQL object and input types for messages
+### T60. Define GraphQL object and input types for messages
 Add Pothos object, enum, and input types for message operations.
 
-### T58. Define GraphQL object and input types for suppressions
+### T61. Define GraphQL object and input types for suppressions
 Add Pothos object, enum, and input types for suppression operations.
 
-### T59. Define GraphQL pagination types
+### T62. Define GraphQL pagination types
 Add connection or paginated list types for domains, messages, and suppressions.
 
-### T60. Add Relay fragment and query types for domain views
+### T63. Add Relay fragment and query types for domain views
 Create the initial Relay query/fragment set for domain lists and domain detail.
 
-### T61. Add Relay fragment and query types for message views
+### T64. Add Relay fragment and query types for message views
 Create the initial Relay query/fragment set for messages and message detail.
 
-### T62. Add Relay mutation types for write operations
-Create the initial Relay mutation documents for domain verification, send message, and suppression changes.
+### T65. Add Relay mutation types for write operations
+Create the initial Relay mutation documents for API key management, domain verification, send message, and suppression changes.
 
-### T63. Define UI view-model types for domains
+### T66. Define UI view-model types for domains
 Create typed view-model boundaries for domain screens.
 
-### T64. Define UI view-model types for messages
+### T67. Define UI view-model types for messages
 Create typed view-model boundaries for message screens.
 
-### T65. Define UI view-model types for API keys and suppressions
+### T68. Define UI view-model types for API keys and suppressions
 Create typed view-model boundaries for API key and suppression screens.
 
 ## Phase F — authentication and authorization
 
-### T47. Implement API key generator
-Create secure API key generation with prefix and secret components.
+### T69. Integrate better-auth server instance
+Configure better-auth for TanStack Start, including account/session identity resolution and API-key support.
 
-### T48. Implement API key hashing
-Hash API keys for storage and add verification helpers.
+### T70. Wire better-auth client auth flows
+Implement signup, sign-in, sign-out, and session lifecycle flows for the admin/customer UI.
 
-### T49. Implement authentication middleware
-Authenticate requests via API key and attach account context.
+### T71. Implement GraphQL authentication context
+Authenticate GraphQL requests via better-auth session or better-auth-managed API key and attach account context.
 
-### T50. Implement authorization helpers
+### T72. Implement authorization helpers
 Add reusable account-scoped access checks.
 
-### T51. Implement revoked-key rejection
-Ensure revoked keys are blocked consistently.
+### T73. Implement revoked-key rejection
+Ensure revoked keys are blocked consistently through better-auth-backed API-key validation.
 
 ## Phase G — domain lifecycle services
 
-### T52. Implement domain creation service
+### T74. Implement domain creation service
 Create a service that validates input, creates a domain, creates verification token material, and returns DNS instructions.
 
-### T53. Implement DKIM key generation service
+### T75. Implement DKIM key generation service
 Generate DKIM key material and persist the selector record.
 
-### T54. Implement domain ownership verification checker
+### T76. Implement domain ownership verification checker
 Resolve and verify ownership TXT records.
 
-### T55. Implement DKIM DNS readiness checker
+### T77. Implement DKIM DNS readiness checker
 Resolve and verify DKIM DNS records.
 
-### T56. Implement SPF readiness checker
+### T78. Implement SPF readiness checker
 Inspect SPF DNS presence/readiness and return warnings or readiness details.
 
-### T57. Implement domain verification service
+### T79. Implement domain verification service
 Combine the DNS checks and update domain status deterministically.
 
-### T58. Implement domain pause/disable capability in service layer
+### T80. Implement domain pause/disable capability in service layer
 Allow internal policy to pause or disable domains cleanly.
 
 ## Phase H — message acceptance services
 
-### T59. Implement send-request validation service
+### T81. Implement send-request validation service
 Validate sender domain ownership, content presence, recipient counts, and basic limits.
 
-### T60. Implement idempotency lookup service
+### T82. Implement idempotency lookup service
 Check whether the request has already been accepted for the same scope.
 
-### T61. Implement suppression pre-check service
+### T83. Implement suppression pre-check service
 Check whether any intended recipient is suppressed.
 
-### T62. Implement message acceptance service
+### T84. Implement message acceptance service
 Persist the message, recipients, initial status, and enqueue a delivery job.
 
-### T63. Implement acceptance transaction boundary
+### T85. Implement acceptance transaction boundary
 Ensure message creation and job enqueueing happen atomically or with equivalent correctness guarantees.
 
 ## Phase I — delivery provider abstraction
 
-### T64. Define delivery provider interface
+### T86. Define delivery provider interface
 Create the typed abstraction that the worker uses for sending.
 
-### T65. Implement initial provider adapter
+### T87. Implement initial provider adapter
 Implement the first concrete provider adapter.
 
-### T66. Map provider responses to internal outcomes
+### T88. Map provider responses to internal outcomes
 Normalize provider-specific outcomes into typed success/failure categories.
 
 ## Phase J — worker and queue processing
 
-### T67. Implement queue claim loop
+### T89. Implement queue claim loop
 Create the worker loop that safely claims available jobs.
 
-### T68. Implement message-delivery worker handler
+### T90. Implement message-delivery worker handler
 Load message context and run the send pipeline.
 
-### T69. Implement final eligibility re-check before send
+### T91. Implement final eligibility re-check before send
 Re-check domain status, suppression, and terminal-state safety immediately before delivery.
 
-### T70. Implement delivery attempt recording
+### T92. Implement delivery attempt recording
 Record each provider send attempt with timestamps and result metadata.
 
-### T71. Implement success transition handling
+### T93. Implement success transition handling
 Update message status and provider message ID on success.
 
-### T72. Implement retry scheduling for transient failures
+### T94. Implement retry scheduling for transient failures
 Reschedule transient failures with capped exponential backoff.
 
-### T73. Implement terminal failure handling
+### T95. Implement terminal failure handling
 Mark non-retryable and exhausted failures as terminal.
 
-### T74. Implement duplicate-processing safety
+### T96. Implement duplicate-processing safety
 Ensure worker reprocessing cannot create duplicate final side effects beyond allowed idempotent boundaries.
 
 ## Phase K — GraphQL operations
 
-### T94. Implement `createApiKey` mutation
+### T97. Implement `createApiKey` mutation
 Create the GraphQL mutation for API key creation.
 
-### T95. Implement `createDomain` mutation
+### T98. Implement `revokeApiKey` mutation
+Create the GraphQL mutation for API key revocation.
+
+### T99. Implement `apiKeys` query
+Create the GraphQL query for listing API keys.
+
+### T100. Implement `createDomain` mutation
 Create the GraphQL mutation for domain creation.
 
-### T96. Implement `domains` query
+### T101. Implement `domains` query
 Create the GraphQL query for listing domains.
 
-### T97. Implement `domain(id)` query
+### T102. Implement `domain(id)` query
 Create the GraphQL query for reading a single domain.
 
-### T98. Implement `verifyDomain` mutation
+### T103. Implement `verifyDomain` mutation
 Create the GraphQL mutation for manual verification check triggering.
 
-### T99. Implement `sendMessage` mutation
+### T104. Implement `sendMessage` mutation
 Create the GraphQL mutation for message submission.
 
-### T100. Implement `messages` query
+### T105. Implement `messages` query
 Create the paginated GraphQL query for message listing.
 
-### T101. Implement `message(id)` query
+### T106. Implement `message(id)` query
 Create the GraphQL query for message detail.
 
-### T102. Implement `createSuppression` mutation
+### T107. Implement `createSuppression` mutation
 Create the GraphQL mutation for suppression creation.
 
-### T103. Implement `suppressions` query
+### T108. Implement `suppressions` query
 Create the GraphQL query for suppression listing.
 
-### T104. Implement `deleteSuppression` mutation
+### T109. Implement `deleteSuppression` mutation
 Create the GraphQL mutation for suppression deletion.
 
-### T105. Implement TanStack Start route integration for GraphQL endpoint
+### T110. Implement TanStack Start route integration for GraphQL endpoint
 Wire the GraphQL execution entrypoint into the TanStack Start application.
 
 ## Phase K.5 — Basic admin/customer UI
 
-### T106. Implement authenticated app layout
+### T111. Implement authenticated app layout
 Create the basic logged-in layout using Tailwind and daisyUI primitives.
 
-### T107. Implement domain list page
+### T112. Implement domain list page
 Create the domain listing screen.
 
-### T108. Implement domain create page/form
+### T113. Implement domain create page/form
 Create the domain creation screen and mutation flow.
 
-### T109. Implement domain detail page
+### T114. Implement domain detail page
 Create the domain detail screen with verification instructions and readiness state.
 
-### T110. Implement manual domain verification action
+### T115. Implement manual domain verification action
 Create the UI action for re-running verification.
 
-### T111. Implement message list page
+### T116. Implement message list page
 Create the recent messages screen.
 
-### T112. Implement message detail page
+### T117. Implement message detail page
 Create the message detail screen.
 
-### T113. Implement API key list/create/revoke page
+### T118. Implement API key list/create/revoke page
 Create the API key management screen.
 
-### T114. Implement suppression list/create/delete page
+### T119. Implement suppression list/create/delete page
 Create the suppression management screen.
 
-### T115. Add basic loading, empty, and error states for all admin screens
+### T120. Add basic loading, empty, and error states for all admin screens
 Ensure every critical screen has usable states.
 
 ## Phase L — observability and safety
 
-### T86. Add request logging middleware
+### T121. Add request logging middleware
 Log requests with request ID, account context, and safe metadata.
 
-### T87. Add error-to-response mapper
+### T122. Add error-to-response mapper
 Map typed domain errors to stable HTTP responses.
 
-### T88. Add message status transition logging
+### T123. Add message status transition logging
 Log important status transitions with message ID.
 
-### T89. Add audit logging hooks
+### T124. Add audit logging hooks
 Write audit log records for key operational actions.
 
-### T90. Add metrics hooks
+### T125. Add metrics hooks
 Add metrics counters and timers where feasible.
 
-### T91. Add rate limiting middleware
+### T126. Add rate limiting middleware
 Add per-key and/or per-account rate limiting.
 
 ## Phase M — test coverage
 
-### T92. Add unit tests for email validation
+### T127. Add unit tests for email validation
 Test valid and invalid email parsing cases.
 
-### T93. Add unit tests for domain validation
+### T128. Add unit tests for domain validation
 Test valid and invalid domain parsing cases.
 
-### T94. Add unit tests for API key auth flow
+### T129. Add unit tests for API key auth flow
 Test success, bad key, and revoked key cases.
 
-### T95. Add unit tests for domain verification service
+### T130. Add unit tests for domain verification service
 Test verification success and failure transitions.
 
-### T96. Add unit tests for message acceptance service
+### T131. Add unit tests for message acceptance service
 Test happy path and key rejection scenarios.
 
-### T97. Add unit tests for idempotency behavior
+### T132. Add unit tests for idempotency behavior
 Test duplicate send submissions.
 
-### T98. Add unit tests for suppression behavior
+### T133. Add unit tests for suppression behavior
 Test blocked recipients.
 
-### T99. Add worker tests for retryable failures
+### T134. Add worker tests for retryable failures
 Test retry scheduling and attempt increments.
 
-### T100. Add worker tests for permanent failures
+### T135. Add worker tests for permanent failures
 Test terminal failure transitions.
 
-### T116. Add integration tests for `sendMessage`
+### T136. Add integration tests for `sendMessage`
 Test end-to-end acceptance behavior through GraphQL.
 
-### T117. Add integration tests for domain GraphQL operations
+### T137. Add integration tests for domain GraphQL operations
 Test create, read, list, and verify flows through GraphQL.
 
-### T118. Add integration tests for GraphQL auth context
+### T138. Add integration tests for GraphQL auth context
 Verify API key authentication and context scoping inside GraphQL execution.
 
-### T119. Add integration tests for Relay query flow
+### T139. Add integration tests for Relay query flow
 Verify the app-side Relay environment can query and mutate against the GraphQL endpoint correctly.
 
-### T120. Add UI tests for domain management flow
+### T140. Add UI tests for domain management flow
 Verify the core domain-management UI path works.
 
-### T121. Add UI tests for API key management flow
+### T141. Add UI tests for API key management flow
 Verify create and revoke flows work.
 
-### T122. Add authorization boundary tests
+### T142. Add authorization boundary tests
 Verify one account cannot access another account’s resources.
 
 ## Phase N — implementation hardening
 
-### T123. Review all external schemas for strictness
+### T143. Review all external schemas for strictness
 Ensure no loose or unbounded input objects remain.
 
-### T124. Review logs for secret leakage
+### T144. Review logs for secret leakage
 Ensure keys and secrets are redacted everywhere.
 
-### T125. Review error codes for consistency
+### T145. Review error codes for consistency
 Ensure all domain/service errors map to stable public codes.
 
-### T126. Review database indexes
+### T146. Review database indexes
 Add indexes needed for lookup paths, queue claiming, and idempotency checks.
 
-### T127. Review transaction boundaries
+### T147. Review transaction boundaries
 Verify correctness for domain creation, message acceptance, and worker transitions.
 
-### T128. Review horizontal-scaling assumptions
+### T148. Review horizontal-scaling assumptions
 Check for in-memory correctness dependencies and remove them.
 
-### T129. Review Relay schema ergonomics
+### T149. Review Relay schema ergonomics
 Ensure the schema shape remains practical for fragment colocation, pagination, and mutation updates.
 
-### T130. Review admin UI consistency
+### T150. Review admin UI consistency
 Ensure shared Tailwind and daisyUI patterns are applied consistently across screens.
 
-### T131. Produce implementation README
-Document local setup, scripts, environment variables, GraphQL schema layout, Relay setup, TanStack Start wiring, Tailwind/daisyUI setup, and service boundaries for future contributors and coding agents.
-Document local setup, scripts, environment variables, GraphQL schema layout, Relay setup, TanStack Start wiring, and service boundaries for future contributors and coding agents.
-Document local setup, scripts, environment variables, GraphQL schema layout, and service boundaries for future contributors and coding agents.
-Document local setup, scripts, environment variables, and service boundaries for future contributors and coding agents.
+### T151. Produce implementation README
+Document local setup, scripts, environment variables, GraphQL schema layout, Relay setup, TanStack Start wiring, better-auth integration, Tailwind/daisyUI setup, and service boundaries for future contributors and coding agents.
 
 ---
 
@@ -1370,14 +1391,12 @@ Document local setup, scripts, environment variables, and service boundaries for
 
 Use this order when driving a coding agent:
 
-1. T01–T18
-2. T19–T38
-3. T39–T51
-4. T52–T58
-5. T59–T63
-6. T64–T74
-7. T75–T91
-8. T92–T110
+1. T01-T23
+2. T24-T46
+3. T47-T73
+4. T74-T96
+5. T97-T126
+6. T127-T151
 
 This sequence keeps each review slice focused and limits cross-cutting rework.
 
@@ -1387,9 +1406,9 @@ This sequence keeps each review slice focused and limits cross-cutting rework.
 
 The v1 implementation is considered complete when all of the following are true:
 
-- a verified account domain can be created and checked through API
+- a verified account domain can be created and checked through GraphQL
 - DKIM configuration exists and is usable for signing
-- an authenticated customer can submit an outbound email over HTTP
+- an authenticated customer can submit an outbound email through GraphQL
 - the system persists the message durably before acknowledging success
 - the system enqueues asynchronous delivery work
 - a worker can deliver the message through the provider abstraction
@@ -1414,5 +1433,14 @@ When implementing, optimize for:
 - reusable service boundaries
 - GraphQL schema shapes that are friendly to Relay
 - TanStack Start wiring that stays thin and replaceable
+- better-auth integration that stays thin and replaceable
 - code that can later be split into separate app/API and worker deployments without redesigning the core domain model
 
+---
+
+## 22. Backlog
+
+These items are intentionally deferred and should not be treated as required for v1 unless explicitly pulled forward:
+
+### B01. Add automated domain verification re-check scheduling
+Periodically re-check DNS for domains that are not yet sendable, persist the latest verification result, and schedule the work in a way that remains safe under multiple worker instances.
