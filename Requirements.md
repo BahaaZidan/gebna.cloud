@@ -16,6 +16,7 @@ Build a modern outbound email service that:
 
 - lets a customer create and verify a sending domain
 - lets a customer send email through a GraphQL API
+- can be deployed and operated as a self-hosted product without vendor-managed control-plane dependencies
 - operates its own self-hosted outbound delivery layer
 - supports plain text and HTML emails
 - supports common headers and metadata needed for real-world use
@@ -55,6 +56,7 @@ The following are out of scope for this version:
 - attachments are out of scope for v1
 - third-party cloud email delivery integrations
 - managed cloud queue services
+- vendor-hosted control-plane dependencies for core product behavior
 
 Note: a basic admin/customer configuration UI is in scope. Only broader marketing and advanced product surfaces are out of scope.
 
@@ -102,12 +104,17 @@ The service must target a standard Node.js runtime and containerized deployment 
 
 Requirements:
 
+- self-hosting is the primary deployment model for this product
 - the runtime must be Node.js
 - the deployment model must be containerized
 - v1 must ship as a single deployable Node.js application bundle
 - background job handlers are logical components within that same deployable bundle in v1
 - configuration must come from validated environment variables suitable for Node.js and containerized deployments
 - v1 must not depend on third-party cloud services for email delivery or queueing
+- the product must not require any vendor-hosted control plane, managed auth service, managed queue service, managed email provider, or managed telemetry service for core functionality
+- a fresh installation must be operable by running the application bundle with PostgreSQL and the required environment variables
+- the product must expose operator-usable health and readiness signals suitable for container orchestration and self-hosted monitoring
+- startup must fail clearly when required configuration, database connectivity, or required migrations are missing
 
 ### 5.4 Code quality
 
@@ -362,27 +369,30 @@ Message delivery must happen asynchronously.
 Requirements:
 
 - delivery jobs must be scheduled and executed through Graphile Worker
-- queued job per accepted message
+- accepted messages with multiple recipients must fan out into recipient-scoped delivery work items before transport execution
+- queued job per accepted recipient delivery work item
 - Graphile Worker claims jobs safely
-- worker loads message and account/domain context
+- worker loads message, recipient, and account/domain context
 - worker performs final send eligibility checks
 - worker renders transport payload
 - worker attempts delivery
-- worker updates message state
+- worker updates recipient state
 - worker records outbound transport response metadata
+- worker derives and persists aggregate message state from recipient outcomes
 
 The delivery system must be safe under multiple worker instances.
 
 ## 7.12 Message status model
 
-The system must track message lifecycle states.
+The system must track both aggregate message lifecycle state and recipient-level delivery state.
 
-Minimum states:
+Message-level minimum states:
 
 - `accepted`
 - `queued`
 - `processing`
 - `sent_to_outbound_layer`
+- `partially_failed`
 - `failed`
 - `suppressed`
 - `rejected`
@@ -392,6 +402,8 @@ The status model must reserve room for future states such as:
 - `delivered`
 - `bounced`
 - `complained`
+
+Recipient rows must also track lifecycle state and failure metadata. Aggregate message status must be derived deterministically from recipient outcomes rather than inferred from a single transport result.
 
 ## 7.13 Failure handling
 
@@ -409,6 +421,7 @@ At minimum:
 - internal unexpected failure
 
 The system must persist machine-readable failure codes and a user-safe message.
+Recipient-scoped delivery failures must be stored on the affected recipient rows and delivery-attempt rows.
 
 ## 7.14 Retry behavior
 
@@ -418,7 +431,7 @@ Requirements:
 
 - retry only for retryable failure classes
 - use capped exponential backoff
-- store retry count
+- store retry count per recipient delivery work item
 - stop after a configured maximum
 - mark terminal failure explicitly
 
@@ -604,6 +617,8 @@ Fields:
 - accountId
 - domain
 - status
+- returnPathDomain
+- returnPathLocalPart
 - verificationToken
 - verifiedAt
 - lastVerificationCheckAt
@@ -646,9 +661,6 @@ Fields:
 - headersJson
 - tagsJson
 - status
-- outboundMessageId
-- failureCode
-- failureMessage
 - acceptedAt
 - queuedAt
 - processingAt
@@ -659,6 +671,7 @@ Fields:
 Note:
 
 - `apiKeyId` must be nullable because a message can be created by a session-authenticated actor rather than an API-key-authenticated actor
+- detailed transport identifiers and failure metadata must live on recipient rows and delivery-attempt rows, not on the aggregate message row
 
 ## 9.6 MessageRecipient
 
@@ -669,6 +682,14 @@ Fields:
 - type (`to`, `cc`, `bcc`)
 - email
 - name
+- status
+- outboundMessageId
+- failureCode
+- failureMessage
+- acceptedAt
+- queuedAt
+- processingAt
+- finalisedAt
 
 ## 9.7 DeliveryAttempt
 
@@ -676,7 +697,9 @@ Fields:
 
 - id
 - messageId
+- messageRecipientId
 - attemptNumber
+- targetHost
 - startedAt
 - endedAt
 - outcome
@@ -759,7 +782,7 @@ The following must be treated as secrets:
 
 - API keys
 - DKIM private keys
-- outbound transport credentials
+- internal relay or transport credentials, if the implementation introduces them
 
 Secrets must not be logged.
 
@@ -795,6 +818,7 @@ Requirements:
 - delivery attempt records
 - machine-readable failure codes
 - timestamps for key state transitions
+- health and readiness signals for self-hosted operators
 
 Optional in v1:
 
@@ -888,6 +912,9 @@ Critical scenarios to test:
 - session-only operations reject API-key authentication
 - retryable outbound transport failure is retried
 - non-retryable outbound transport failure becomes terminal
+- partial recipient acceptance persists mixed recipient outcomes and an aggregate message status of `partially_failed`
+- direct SMTP destination selection follows MX resolution rules for the recipient domain
+- health and readiness checks accurately reflect startup and dependency state for a self-hosted deployment
 - one account cannot read another account’s messages
 
 ---
@@ -910,6 +937,21 @@ The outbound transport interface must expose typed outcomes such as:
 - permanent failure
 - misconfiguration failure
 
+V1 outbound transport requirements:
+
+- v1 must implement direct SMTP delivery initiated by this service
+- the outbound layer must resolve recipient-domain MX records and select SMTP destination hosts according to SMTP DNS rules before opening a delivery session
+- the outbound layer must build a valid SMTP envelope separately from message headers and body
+- the outbound layer must build a valid RFC 5322 message payload before delivery
+- the outbound layer must generate required transport headers including `Message-ID` and `Date`
+- the outbound layer must apply DKIM signing before SMTP delivery
+- the outbound layer must support TLS and STARTTLS when negotiating SMTP connections
+- the outbound layer must enforce connection, command, and overall attempt timeouts
+- the outbound layer must classify SMTP and transport errors into retryable and non-retryable outcomes
+- the outbound layer must record enough response metadata for support and debugging without leaking secrets
+- the outbound layer must support return-path or bounce-address handling consistent with the domain configuration model
+- the outbound layer must keep SMTP-specific logic inside the transport layer rather than leaking it into GraphQL resolvers or domain services
+
 ---
 
 ## 16. Operational assumptions for v1
@@ -925,6 +967,21 @@ Assume:
 - application code must run correctly in the required Node.js runtime
 
 The implementation must avoid single-instance assumptions inside business logic.
+
+### 16.1 Self-hosting operator requirements
+
+The v1 product must be operable from a self-hosting perspective.
+
+Requirements:
+
+- the application must be buildable into a container image suitable for self-hosted deployment
+- the required runtime services for v1 must remain minimal: the application bundle, PostgreSQL, and standard outbound network access for DNS and SMTP
+- the product must provide documented startup configuration for a fresh installation
+- the product must expose health and readiness checks that let an operator determine whether the service can accept traffic and process jobs
+- schema migrations must be documented and safe to run during install and upgrade workflows
+- the product must provide a documented upgrade path for application versions and database migrations
+- the product must document backup and restore expectations for PostgreSQL-backed state
+- the initial account creation flow must work on a fresh self-hosted installation without vendor intervention or hidden bootstrap services
 
 ---
 
@@ -1077,10 +1134,10 @@ Add the DKIM selectors schema.
 Add the messages schema.
 
 ### T40. Create message_recipients table
-Add the message recipients schema.
+Add the message recipients schema including recipient-level lifecycle, failure, and outbound message metadata.
 
 ### T41. Create delivery_attempts table
-Add the delivery attempts schema.
+Add the delivery attempts schema including recipient linkage and SMTP target metadata.
 
 ### T42. Create suppressions table
 Add the suppressions schema.
@@ -1115,10 +1172,10 @@ Add typed persistence functions for DKIM selectors.
 Add typed persistence functions for message creation, reads, and status transitions.
 
 ### T52. Implement message recipient repository
-Add typed persistence functions for recipient rows.
+Add typed persistence functions for recipient rows, recipient-level state transitions, and aggregate-state reads.
 
 ### T53. Implement delivery attempt repository
-Add typed persistence functions for delivery attempt rows.
+Add typed persistence functions for per-recipient delivery attempts and attempt sequencing.
 
 ### T54. Implement suppression repository
 Add typed persistence functions for suppression checks and mutations.
@@ -1219,7 +1276,7 @@ Check whether the request has already been accepted for the same scope.
 Check whether any intended recipient is suppressed.
 
 ### T84. Implement message acceptance service
-Persist the message, recipients, initial status, and enqueue a delivery job through Graphile Worker.
+Persist the message and recipients, derive the initial aggregate status, and enqueue recipient-scoped delivery jobs through Graphile Worker.
 
 ### T85. Implement acceptance transaction boundary
 Ensure message creation and job enqueueing happen atomically or with equivalent correctness guarantees.
@@ -1235,28 +1292,60 @@ Implement the first concrete adapter for the self-hosted outbound delivery layer
 ### T88. Map outbound transport responses to internal outcomes
 Normalize outbound transport outcomes into typed success and failure categories.
 
+## Phase I.5 — outbound transport internals
+
+### T152. Implement SMTP envelope builder
+Create the component that constructs the SMTP envelope from the accepted message and domain configuration.
+
+### T153. Implement RFC 5322 message builder
+Create the component that renders headers and body into a valid RFC 5322 message payload.
+
+### T154. Implement outbound header generation
+Generate required outbound headers including `Message-ID`, `Date`, and other mandatory transport headers.
+
+### T155. Implement DKIM signing integration in the outbound layer
+Apply DKIM signing to the final message payload immediately before SMTP delivery.
+
+### T156. Implement SMTP client session handling
+Add SMTP connection establishment, greeting flow, command sequencing, and clean connection teardown.
+
+### T157. Implement TLS and STARTTLS negotiation
+Add TLS and STARTTLS handling, certificate validation, and timeout-aware upgrade behavior for SMTP sessions.
+
+### T158. Implement SMTP response parsing and retry classification
+Parse SMTP responses and map them into retryable, permanent, and misconfiguration failure categories.
+
+### T159. Implement return-path and bounce-address handling
+Build return-path or bounce-address handling that matches the sending-domain configuration model.
+
+### T160. Implement outbound transport observability
+Record safe response metadata, timing data, and transport-level diagnostics without logging secrets or full message contents.
+
+### T161. Implement destination MX resolution and target selection
+Resolve recipient-domain MX records and choose ordered SMTP targets according to SMTP DNS rules for direct delivery.
+
 ## Phase J — worker and queue processing
 
 ### T89. Integrate Graphile Worker runner
 Create the Graphile Worker runtime wiring that executes delivery jobs safely.
 
 ### T90. Implement message-delivery worker handler
-Load message context and run the outbound delivery pipeline.
+Load message and recipient context and run the outbound delivery pipeline for one recipient delivery work item.
 
 ### T91. Implement final eligibility re-check before send
 Re-check domain status, suppression, and terminal-state safety immediately before delivery.
 
 ### T92. Implement delivery attempt recording
-Record each outbound delivery attempt with timestamps and result metadata.
+Record each recipient-scoped outbound delivery attempt with timestamps, target host, and result metadata.
 
 ### T93. Implement success transition handling
-Update message status and outbound message ID on success.
+Update recipient success state and derive the aggregate message status on success.
 
 ### T94. Implement retry scheduling for transient failures
 Reschedule transient failures with capped exponential backoff.
 
 ### T95. Implement terminal failure handling
-Mark non-retryable and exhausted failures as terminal.
+Mark non-retryable and exhausted recipient failures as terminal and derive the aggregate message status.
 
 ### T96. Implement duplicate-processing safety
 Ensure worker reprocessing cannot create duplicate final side effects beyond allowed idempotent boundaries.
@@ -1434,7 +1523,21 @@ Ensure the schema shape remains practical for fragment colocation, pagination, a
 Ensure shared Tailwind and daisyUI patterns are applied consistently across screens.
 
 ### T151. Produce implementation README
-Document local setup, scripts, environment variables, GraphQL schema layout, Relay setup, TanStack Start wiring, better-auth integration, Node/Docker runtime assumptions, Tailwind/daisyUI setup, and service boundaries for future contributors and coding agents.
+Document local setup, scripts, environment variables, GraphQL schema layout, Relay setup, TanStack Start wiring, better-auth integration, Node/Docker runtime assumptions, Tailwind/daisyUI setup, service boundaries, self-hosted install steps, upgrade workflow, and backup/restore expectations for future contributors and operators.
+
+## Phase O — self-hosting operability
+
+### T162. Add container build and runtime packaging
+Produce the container build definition and runtime packaging needed for self-hosted deployment.
+
+### T163. Add health and readiness endpoints
+Expose operator-usable health and readiness checks for container orchestration and self-hosted monitoring.
+
+### T164. Add startup preflight checks
+Fail startup clearly when required environment variables, database connectivity, or required migrations are missing.
+
+### T165. Add self-hosting install and upgrade documentation
+Document first-install steps, runtime dependencies, migration workflow, upgrade workflow, and backup/restore guidance for self-hosted operators.
 
 ---
 
@@ -1445,9 +1548,12 @@ Use this order when driving a coding agent:
 1. T01-T23
 2. T24-T46
 3. T47-T73
-4. T74-T96
-5. T97-T126
-6. T127-T151
+4. T74-T88
+5. T152-T161
+6. T89-T126
+7. T127-T150
+8. T162-T165
+9. T151
 
 This sequence keeps each review slice focused and limits cross-cutting rework.
 
@@ -1463,12 +1569,15 @@ The v1 implementation is considered complete when all of the following are true:
 - the system persists the message durably before acknowledging success
 - the system enqueues asynchronous delivery work through Graphile Worker
 - a worker can deliver the message through the self-hosted outbound transport layer
-- message state transitions are persisted and queryable
+- the outbound transport layer can build, sign, and send a valid SMTP message
+- recipient-level delivery outcomes and aggregate message state transitions are persisted and queryable
 - suppressed recipients are blocked
 - idempotency prevents duplicate accepted sends for the same request scope
 - revoked API keys are rejected
 - logs and errors are structured and safe
 - the system can run in a standard Node.js containerized deployment
+- the system exposes health and readiness checks suitable for self-hosted operation
+- self-hosted installation, upgrade, and backup/restore expectations are documented
 - the system preserves a path to future horizontal scaling
 
 ---
@@ -1488,6 +1597,7 @@ When implementing, optimize for:
 - better-auth integration that stays thin and replaceable
 - portable Node runtime code
 - self-hosted infrastructure choices that avoid third-party cloud delivery dependencies
+- self-hosted operator ergonomics over hosted-platform assumptions
 - code that fits a single consistent containerized deployment model without redesigning the core domain model
 
 ---
