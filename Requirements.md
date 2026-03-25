@@ -2,7 +2,7 @@
 
 ## 1. Document purpose
 
-This document defines the implementation requirements for the first Gebna Cloud service: a simple outbound email platform.
+This document defines the implementation requirements for the first Gebna Cloud service: an outbound email platform.
 
 The service exposes a GraphQL API over HTTP that allows authenticated customers to send arbitrary email messages to arbitrary recipients, provided the customer has verified and configured a sending domain.
 
@@ -18,9 +18,9 @@ Build a modern outbound email service that:
 - lets a customer send email through a GraphQL API
 - supports plain text and HTML emails
 - supports common headers and metadata needed for real-world use
-- records message lifecycle state for observability and later support tooling
+- records message lifecycle state for observability and support tooling
 - is designed as a monolith initially
-- is structured so the system can later scale horizontally without major redesign
+- preserves a path to future horizontal scaling without major redesign
 
 ---
 
@@ -51,7 +51,7 @@ The following are out of scope for this version:
 - reseller features
 - multi-region deployment
 - customer webhooks for delivery events
-- attachments in v1 unless explicitly added later
+- attachments are out of scope for v1
 
 Note: a basic admin/customer configuration UI is in scope. Only broader marketing and advanced product surfaces are out of scope.
 
@@ -68,7 +68,10 @@ The system must use:
 - no `any`
 - ESLint
 - Prettier
-- Vite where applicable
+- Vite
+- Relay compiler
+- Vitest
+- Valibot for runtime validation of external input
 
 ### 5.2 Required application stack
 
@@ -78,6 +81,7 @@ The application stack must use:
 - React for the UI layer
 - Relay as the GraphQL client
 - GraphQL API
+- GraphQL Yoga
 - better-auth for customer authentication and API-key lifecycle management
 - Pothos as the GraphQL schema builder
 - Drizzle ORM for persistence
@@ -85,9 +89,21 @@ The application stack must use:
 - Tailwind CSS for utility-first styling
 - daisyUI for component-level styling primitives on top of Tailwind CSS
 
-TanStack Start is the required application framework for the monolith and should host the customer-facing app/API surface. React is the UI runtime. Relay is the required GraphQL client for app-side data access. better-auth is the required authentication system for signup, sign-in, sign-out, session handling, and API-key management. Tailwind CSS is the required styling foundation, and daisyUI is the required component class system. Pothos generates a standard GraphQL schema, and Drizzle RQB v2 is the required relational query layer for nested/related reads.
+TanStack Start is the required application framework for the monolith and must host the customer-facing application and GraphQL API surface. React is the UI runtime. Relay is the required GraphQL client for app-side data access. better-auth is the required authentication system for signup, sign-in, sign-out, session handling, and API-key management. GraphQL Yoga must serve the generated schema. Tailwind CSS is the required styling foundation, and daisyUI is the required component class system. Pothos generates a standard GraphQL schema, and Drizzle RQB v2 is the required relational query layer for nested and related reads.
 
-### 5.3 Code quality
+### 5.3 Runtime and deployment target
+
+The service must target a standard Node.js runtime and containerized deployment model.
+
+Requirements:
+
+- the runtime must be Node.js
+- the deployment model must be containerized
+- v1 must ship as a single deployable Node.js application bundle
+- background job handlers are logical components within that same deployable bundle in v1
+- configuration must come from validated environment variables suitable for Node.js and containerized deployments
+
+### 5.4 Code quality
 
 The implementation must emphasize:
 
@@ -97,9 +113,9 @@ The implementation must emphasize:
 - deterministic error handling
 - testable service boundaries
 
-### 5.4 Architecture direction
+### 5.5 Architecture direction
 
-The initial implementation may be a monolith, but it must be shaped so that future horizontal scaling is straightforward.
+The initial implementation is a monolith, and it must preserve a straightforward path to future horizontal scaling.
 
 This means:
 
@@ -143,7 +159,9 @@ UI auth rules for v1:
 
 - the frontend talks directly to better-auth only for signup, sign-in, sign-out, and session lifecycle flows
 - all product data fetching and product mutations after authentication must go through GraphQL
-- GraphQL resolvers may call the server-side better-auth instance for API-key management and account identity lookup
+- GraphQL resolvers use the server-side better-auth instance for API-key management and account identity lookup
+- GraphQL product access must support both session-authenticated UI traffic and API-key-authenticated programmatic traffic
+- not every GraphQL operation is available under both auth modes; allowed auth modes must be explicit per operation
 
 Minimum UI scope in v1:
 
@@ -165,7 +183,7 @@ UI non-goals for v1:
 - template editing
 - marketing pages
 
-The UI may remain visually simple, but it must be functional and production-usable.
+The UI does not need advanced visual polish in v1, but it must be functional and production-usable.
 
 ## 7.1 Accounts
 
@@ -181,14 +199,20 @@ Each account owns:
 
 For v1, each authenticated better-auth user maps to exactly one account.
 
-The exact signup UX may remain thin, but better-auth-backed signup, sign-in, and sign-out flows are in scope because the admin/customer UI requires them.
+Session-authenticated users and API keys both resolve to account-scoped access, but they remain distinct actor types for authorization and audit purposes.
 
-## 7.2 API authentication
+The signup UX does not need advanced polish in v1, but better-auth-backed signup, sign-in, and sign-out flows are in scope because the admin/customer UI requires them.
 
-The system must support API-key-based authentication for outbound GraphQL access.
+## 7.2 Authentication modes
+
+The system must support session-based and API-key-based authentication for product GraphQL access.
 
 Requirements:
 
+- the product GraphQL API must support two auth modes: better-auth session auth for human users and API-key auth for programmatic clients
+- both auth modes must resolve to a normalized account context
+- the active auth mode must remain visible to resolvers, services, and audit logging
+- each GraphQL operation must explicitly declare whether it allows `session`, `api_key`, or both
 - each API key belongs to one account
 - API-key lifecycle management must be implemented through the better-auth server instance and its API-key capability
 - API keys must be stored hashed or otherwise non-recoverably protected by better-auth, never in plaintext after creation
@@ -196,7 +220,7 @@ Requirements:
 - each API key has a display name
 - each API key can be revoked
 - revoked keys stop working immediately
-- each request is authenticated to an account through the API key
+- each API-key-authenticated request is authenticated to an account through the API key
 
 ## 7.3 Sending domains
 
@@ -209,10 +233,12 @@ A sending domain includes:
 - status
 - DKIM configuration
 - SPF guidance metadata
-- return-path / bounce domain metadata if supported in v1
+- optional return-path or bounce-domain metadata when the v1 transport supports it
 - timestamps
 
-Domain statuses should be explicit, such as:
+Domain statuses must be explicit.
+
+Minimum required statuses:
 
 - `pending_dns`
 - `verified`
@@ -229,12 +255,12 @@ The system must require DNS-based proof of domain ownership.
 Requirements:
 
 - generate verification records for the customer
-- provide exact DNS instructions through API responses
+- provide exact DNS instructions through GraphQL responses
 - allow manual DNS re-checks in v1
 - persist last verification result
 - persist timestamps for checks
 
-Verification should include at minimum:
+Verification must include at minimum:
 
 - ownership verification TXT record
 - DKIM DNS records
@@ -251,9 +277,9 @@ Requirements:
 - store private key securely
 - expose DNS records needed by the customer
 - sign all eligible outbound messages for verified domains
-- support key rotation later without breaking the domain model
+- preserve future key rotation without breaking the domain model
 
-The initial version may use one selector per domain, but the schema must not block multiple selectors later.
+V1 uses one selector per domain. The schema must allow multiple selectors in a future version.
 
 ## 7.6 SPF readiness
 
@@ -261,7 +287,7 @@ The system must tell the customer what SPF include mechanism or sending rule is 
 
 Requirements:
 
-- return machine-readable SPF guidance in the domain details API
+- return machine-readable SPF guidance in the domain details GraphQL response
 - perform readiness checks and warn if SPF is missing or clearly invalid
 - do not block sending solely because SPF inspection is imperfect, as long as domain ownership and DKIM requirements are satisfied and product policy allows sending
 
@@ -301,18 +327,19 @@ The product must not require recipients to pre-exist in the system.
 
 ## 7.9 Idempotency
 
-The message submission endpoint must support idempotent retries.
+The `sendMessage` mutation must support idempotent retries.
 
 Requirements:
 
 - support a caller-provided idempotency key
 - deduplicate repeated submissions within a defined scope
-- return the original result for a duplicate request when appropriate
+- return the original accepted result when the idempotency key and request fingerprint match
+- reject reuse of the same idempotency key with a different request fingerprint
 - persist enough request fingerprint data to detect misuse
 
 ## 7.10 Durable acceptance model
 
-The API should not claim success only because an upstream SMTP/API handoff succeeded.
+The system must not claim success only because an upstream SMTP or provider API handoff succeeded.
 
 Instead:
 
@@ -336,7 +363,7 @@ Requirements:
 - worker updates message state
 - worker records provider response identifiers
 
-The delivery system must be safe for multiple worker instances later.
+The delivery system must be safe under multiple worker instances.
 
 ## 7.12 Message status model
 
@@ -352,7 +379,7 @@ Minimum states:
 - `suppressed`
 - `rejected`
 
-If later webhook-based feedback is added, the model should be extensible for:
+The status model must reserve room for future states such as:
 
 - `delivered`
 - `bounced`
@@ -407,7 +434,7 @@ At minimum, the system must support:
 
 - manual suppression insertion
 - suppression check before delivery
-- suppression check during API acceptance when feasible
+- suppression check during GraphQL acceptance before the message is accepted
 
 ## 7.16 Rate limiting
 
@@ -419,7 +446,7 @@ At minimum:
 - optional per account rate limiting
 - clear error response when exceeded
 
-The implementation must not assume a single process in a way that blocks later distributed rate limiting.
+The implementation must not rely on single-process assumptions that would block distributed rate limiting.
 
 ## 7.17 Auditability
 
@@ -433,15 +460,15 @@ At minimum:
 - domain verification changes
 - manual suppression actions
 
-## 7.18 Status retrieval API
+## 7.18 Status retrieval queries
 
-The API must expose message lookup for the authenticated account.
+GraphQL must expose message lookup for the authenticated account.
 
 At minimum:
 
 - fetch message by id
 - list recent messages with pagination
-- filter by domain and status where feasible
+- filter by domain and status
 
 The response must not leak internal-only details or data belonging to another account.
 
@@ -457,28 +484,30 @@ Requirements:
 
 - GraphQL endpoint for customer-facing product API access
 - Pothos as the schema builder
-- Relay-compatible schema design
+- Relay-compliant schema design
 - versioned schema change discipline even if the HTTP endpoint path is not versioned
 - predictable typed error model
 - stable field naming
 - separation between GraphQL layer and service layer
 - GraphQL is the default interface for all product reads and writes unless a requirement explicitly says otherwise
 - signup, sign-in, sign-out, and session lifecycle flows are the allowed v1 exception and are handled through better-auth endpoints
+- the GraphQL layer must support both better-auth session auth and API-key auth
+- GraphQL must not be treated as globally session-guarded; authorization must be evaluated per operation
+- GraphQL request context must include normalized account identity, actor identity, and auth mode
 
-The generated Pothos schema should be a plain GraphQL schema that can be served by a compatible GraphQL server implementation.
+The generated Pothos schema must be a plain GraphQL schema served through GraphQL Yoga.
 
-GraphQL is the north star for this codebase. Auth flows may use better-auth directly, but all post-authentication product interactions must use GraphQL.
+GraphQL is the only product interface in v1. Auth flows use better-auth directly, but all post-authentication product interactions must use GraphQL.
 
 ## 8.2 Relay-oriented schema rules
 
 Requirements:
 
 - design object identities so Relay caching and normalization are straightforward
-- prefer stable globally unique IDs for GraphQL nodes where practical
-- structure list fields with explicit pagination strategy compatible with Relay
-- colocatable fragments must be practical for domain, message, suppression, and API key views
-- mutation payloads should be explicit and predictable for Relay consumers
-- use connection-style pagination for list fields where Relay pagination hooks are expected
+- use stable globally unique IDs for GraphQL node types
+- use connection-style pagination for Relay-driven list fields
+- support colocated fragments for domain, message, suppression, and API key views
+- use explicit and predictable mutation payload types for Relay consumers
 
 ## 8.3 Mutation and query surface required in v1
 
@@ -503,6 +532,11 @@ Queries:
 - `message(id)`
 - `suppressions`
 
+Auth policy for the minimum v1 GraphQL surface:
+
+- session-authenticated only: `createApiKey`, `revokeApiKey`, `apiKeys`, `createDomain`, `verifyDomain`, `domains`, `domain(id)`, `createSuppression`, `deleteSuppression`, `suppressions`
+- session-authenticated or API-key-authenticated: `sendMessage`, `messages`, `message(id)`
+
 ## 8.4 GraphQL error model
 
 Requirements:
@@ -510,7 +544,7 @@ Requirements:
 - resolver errors must map from stable domain/service errors
 - user-safe messages only
 - internal details must stay out of GraphQL responses
-- request ID must be attachable through extensions or equivalent logging correlation
+- request ID must be included in GraphQL `extensions` and in structured logs
 
 ## 8.5 GraphQL schema design rules
 
@@ -552,7 +586,7 @@ Fields:
 - revokedAt
 - lastUsedAt
 
-If better-auth manages API-key persistence directly, equivalent fields and behavior are acceptable even if the physical table shape or naming differs.
+If better-auth manages API-key persistence directly, the physical table shape can differ, but the service must preserve the listed logical fields and behaviors.
 
 ## 9.3 Domain
 
@@ -613,6 +647,10 @@ Fields:
 - finalisedAt
 - createdAt
 - updatedAt
+
+Note:
+
+- `apiKeyId` must be nullable because a message can be created by a session-authenticated actor rather than an API-key-authenticated actor
 
 ## 9.6 MessageRecipient
 
@@ -689,13 +727,16 @@ If a separate queue system is used, the service still needs equivalent logical b
 
 ## 10.1 Authentication
 
-- all customer product API endpoints require authentication except flows explicitly meant for signup, sign-in, sign-out, or bootstrap
+- all customer product API endpoints require authentication except signup, sign-in, and sign-out flows
 - better-auth is the source of truth for customer session authentication and API-key authentication
-- API key lookup and verification must be delegated to better-auth or an equivalent server-side better-auth primitive, not to plaintext comparison
+- session-authenticated user access and API-key-authenticated access are both first-class and must be handled explicitly
+- each GraphQL operation must enforce its allowed auth modes rather than assuming one global authentication rule for the whole schema
+- API key lookup and verification must be delegated to better-auth server-side APIs or adapters, not to plaintext comparison
 
 ## 10.2 Authorization
 
 - every domain, message, suppression entry, and key must be scoped to the authenticated account
+- authorization must evaluate both account scope and auth mode
 - cross-account access must be impossible through both API and internal service methods
 
 ## 10.3 Input validation
@@ -755,7 +796,7 @@ Requirements:
 - machine-readable failure codes
 - timestamps for key state transitions
 
-Nice-to-have but optional in initial implementation:
+Optional in v1:
 
 - metrics counters for accepts, rejects, retries, failures
 - latency histograms
@@ -767,7 +808,7 @@ Nice-to-have but optional in initial implementation:
 
 The codebase must be organized into clear layers.
 
-Suggested layering:
+Required logical layering:
 
 - `app/`: TanStack Start routes, request handling, and application wiring
 - `auth/`: better-auth server/client setup, auth adapters, and auth helpers
@@ -785,16 +826,19 @@ Suggested layering:
 
 Rules:
 
-- TanStack Start route handlers should stay thin
-- React components should fetch through Relay, not ad hoc fetch wrappers
-- React auth flows should use better-auth client APIs directly only for signup, sign-in, sign-out, and session lifecycle operations
-- Relay queries should be fragment-driven where practical
-- services should not depend on GraphQL-, Relay-, or React-specific objects
-- repositories should not contain business policy
-- worker logic should reuse service-layer code where appropriate
-- Drizzle RQB v2 should be used for relational reads that naturally map to nested GraphQL query shapes
-- shared UI styling should primarily use Tailwind utility classes plus daisyUI component classes
-- avoid bespoke CSS except for narrow cases that are hard to express with Tailwind and daisyUI
+- TanStack Start route handlers must stay thin
+- React components must fetch through Relay, not ad hoc fetch wrappers
+- React auth flows must use better-auth client APIs directly only for signup, sign-in, sign-out, and session lifecycle operations
+- Relay queries must be fragment-driven
+- auth code must normalize session-authenticated users and API-key-authenticated callers into a shared account-scoped actor context before business logic runs
+- services must not depend on GraphQL-, Relay-, or React-specific objects
+- repositories must not contain business policy
+- worker logic must reuse service-layer code instead of reimplementing business rules
+- Drizzle RQB v2 must be used for relational reads that naturally map to nested GraphQL query shapes
+- shared UI styling must primarily use Tailwind utility classes plus daisyUI component classes
+- custom CSS is allowed only for cases that are hard to express with Tailwind and daisyUI
+- shared UI primitives must be used for form inputs, buttons, menus, and loading states instead of re-creating ad hoc markup per screen
+- server/runtime code must stay portable to standard Node.js
 
 ---
 
@@ -811,7 +855,7 @@ Requirements:
 - queue semantics support multiple consumers safely
 - retries are idempotent
 - duplicate processing is tolerated safely
-- rate limiting strategy can later move to a distributed store
+- rate limiting must not rely on in-memory per-process counters for correctness
 - request handling does not depend on local memory caches for correctness
 
 ---
@@ -824,7 +868,7 @@ Minimum required categories:
 
 - schema validation unit tests
 - service unit tests
-- repository tests where practical
+- repository tests for non-trivial query and persistence logic
 - GraphQL integration tests
 - worker flow tests
 - idempotency tests
@@ -838,6 +882,9 @@ Critical scenarios to test:
 - duplicate idempotency key does not create duplicate message
 - suppressed recipient is blocked
 - revoked API key is rejected
+- session-authenticated admin operations succeed
+- API-key-authenticated `sendMessage` succeeds when the account and domain are valid
+- session-only operations reject API-key authentication
 - retryable provider failure is retried
 - non-retryable provider failure becomes terminal
 - one account cannot read another account’s messages
@@ -848,13 +895,13 @@ Critical scenarios to test:
 
 The code must not hard-wire transport logic directly into GraphQL resolvers or general business logic.
 
-Define a provider abstraction so the system can later support:
+Define a provider abstraction that preserves future support for:
 
 - direct SMTP
 - third-party mail APIs
 - internal MTA pipeline
 
-The provider interface should expose typed outcomes such as:
+The provider interface must expose typed outcomes such as:
 
 - success with provider message id
 - temporary failure
@@ -867,13 +914,15 @@ The provider interface should expose typed outcomes such as:
 
 Assume:
 
-- one TanStack Start deployment initially
+- one deployed Node.js application bundle initially
+- one containerized deployment model initially
 - one relational database initially
 - one async queue mechanism initially
 - one delivery provider implementation initially
-- React UI may begin minimal or internal-only, but the app foundation should still be present
+- the React UI does not need advanced polish in v1, but it must cover the required admin and customer workflows
+- application code must run correctly in the required Node.js runtime
 
-The implementation should still avoid making single-instance assumptions inside business logic.
+The implementation must avoid single-instance assumptions inside business logic.
 
 ---
 
@@ -927,10 +976,10 @@ Create a package script for standalone type checking.
 Set up the test runner and base test config.
 
 ### T09. Add Vite configuration
-Set up Vite-based development and build configuration.
+Set up Vite-based development and build configuration for a Node-targeted TanStack Start application.
 
 ### T10. Scaffold TanStack Start application
-Create the TanStack Start app scaffold and establish the top-level app structure.
+Create the TanStack Start app scaffold for the Node runtime and establish the top-level app structure.
 
 ### T11. Add React app shell
 Create the initial React app shell and shared layout primitives.
@@ -942,16 +991,16 @@ Configure Tailwind CSS in the app using the Vite-oriented integration path.
 Configure daisyUI as a Tailwind plugin and define the initial theme strategy.
 
 ### T14. Add GraphQL server bootstrap
-Create the GraphQL server bootstrap and wire it to the app runtime.
+Create the Node-hosted GraphQL Yoga server bootstrap and wire it to the app runtime.
 
 ### T15. Add Relay network layer scaffold
 Create the Relay network layer that talks to the GraphQL endpoint.
 
 ### T16. Add typed Relay environment factory
-Build the typed Relay environment initialization for client and server usage as needed.
+Build the typed Relay environment initialization for client and server usage.
 
 ### T17. Add typed environment config loader
-Create a typed configuration module that validates all required environment variables at startup.
+Create a typed configuration module that validates all required Node and Docker environment variables at startup.
 
 ## Phase B — shared primitives
 
@@ -979,7 +1028,7 @@ Create shared parsing and validation utilities for domain names.
 Create the central Pothos builder configuration and typed schema context.
 
 ### T25. Add GraphQL context factory
-Build the request context containing account identity, request ID, logger, and database handle.
+Build the request context containing normalized account identity, actor identity, auth mode, request ID, logger, and database handle.
 
 ### T26. Add GraphQL scalar strategy
 Define the scalar approach for DateTime, JSON, and any custom scalars needed.
@@ -991,7 +1040,7 @@ Map domain/service errors into GraphQL-safe errors.
 Create empty root types and modular field registration.
 
 ### T29. Add Relay compiler configuration
-Set up Relay compiler configuration and generated artifact conventions.
+Set up Relay compiler configuration, schema export automation, and generated artifact conventions.
 
 ### T30. Add base Relay query conventions
 Define the project conventions for fragments, pagination, mutations, and query naming.
@@ -1037,8 +1086,8 @@ Add the suppressions schema.
 ### T43. Create audit_logs table
 Add the audit logs schema.
 
-### T44. Create queue_jobs table or equivalent persistence contract
-Add persistent queue job representation if the chosen queue requires it.
+### T44. Create queue_jobs table or define the persistent queue contract
+Add the persistent queue job representation used by the chosen queue implementation.
 
 ### T45. Define Drizzle relations
 Declare all table relations needed by Drizzle RQB v2.
@@ -1119,13 +1168,13 @@ Create typed view-model boundaries for API key and suppression screens.
 ## Phase F — authentication and authorization
 
 ### T69. Integrate better-auth server instance
-Configure better-auth for TanStack Start, including account/session identity resolution and API-key support.
+Configure better-auth for TanStack Start, including session auth for the admin UI, API-key support for programmatic clients, and normalized account resolution.
 
 ### T70. Wire better-auth client auth flows
 Implement signup, sign-in, sign-out, and session lifecycle flows for the admin/customer UI.
 
 ### T71. Implement GraphQL authentication context
-Authenticate GraphQL requests via better-auth session or better-auth-managed API key and attach account context.
+Authenticate GraphQL requests via better-auth session or better-auth-managed API key and attach normalized account context, actor identity, and auth mode.
 
 ### T72. Implement authorization helpers
 Add reusable account-scoped access checks.
@@ -1252,7 +1301,7 @@ Create the GraphQL query for suppression listing.
 Create the GraphQL mutation for suppression deletion.
 
 ### T110. Implement TanStack Start route integration for GraphQL endpoint
-Wire the GraphQL execution entrypoint into the TanStack Start application.
+Wire the GraphQL execution entrypoint into the TanStack Start application for the Node runtime target.
 
 ## Phase K.5 — Basic admin/customer UI
 
@@ -1301,7 +1350,7 @@ Log important status transitions with message ID.
 Write audit log records for key operational actions.
 
 ### T125. Add metrics hooks
-Add metrics counters and timers where feasible.
+Add metrics counters and timers for key flows.
 
 ### T126. Add rate limiting middleware
 Add per-key and/or per-account rate limiting.
@@ -1383,7 +1432,7 @@ Ensure the schema shape remains practical for fragment colocation, pagination, a
 Ensure shared Tailwind and daisyUI patterns are applied consistently across screens.
 
 ### T151. Produce implementation README
-Document local setup, scripts, environment variables, GraphQL schema layout, Relay setup, TanStack Start wiring, better-auth integration, Tailwind/daisyUI setup, and service boundaries for future contributors and coding agents.
+Document local setup, scripts, environment variables, GraphQL schema layout, Relay setup, TanStack Start wiring, better-auth integration, Node/Docker runtime assumptions, Tailwind/daisyUI setup, and service boundaries for future contributors and coding agents.
 
 ---
 
@@ -1417,7 +1466,8 @@ The v1 implementation is considered complete when all of the following are true:
 - idempotency prevents duplicate accepted sends for the same request scope
 - revoked API keys are rejected
 - logs and errors are structured and safe
-- the system remains compatible with future horizontal scaling
+- the system can run in a standard Node.js containerized deployment
+- the system preserves a path to future horizontal scaling
 
 ---
 
@@ -1434,7 +1484,8 @@ When implementing, optimize for:
 - GraphQL schema shapes that are friendly to Relay
 - TanStack Start wiring that stays thin and replaceable
 - better-auth integration that stays thin and replaceable
-- code that can later be split into separate app/API and worker deployments without redesigning the core domain model
+- portable Node runtime code
+- code that fits a single consistent containerized deployment model without redesigning the core domain model
 
 ---
 
