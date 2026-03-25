@@ -22,7 +22,6 @@ Build a modern outbound email service that:
 - supports common headers and metadata needed for real-world use
 - records message lifecycle state for observability and support tooling
 - is designed as a monolith initially
-- preserves a path to future horizontal scaling without major redesign
 
 ---
 
@@ -128,11 +127,10 @@ The implementation must emphasize:
 
 ### 5.5 Architecture direction
 
-The initial implementation is a monolith, and it must preserve a straightforward path to future horizontal scaling.
+The initial implementation is a monolith focused on shipping a usable self-hosted MVP.
 
 This means:
 
-- stateless API processes
 - durable persistence for state transitions
 - queue-backed async delivery flow
 - self-hosted outbound delivery flow
@@ -209,11 +207,10 @@ Each account owns:
 - verified domains
 - sent messages
 - suppression entries
-- audit-relevant actions
 
 For v1, each authenticated better-auth user maps to exactly one account.
 
-Session-authenticated users and API keys both resolve to account-scoped access, but they remain distinct actor types for authorization and audit purposes.
+Session-authenticated users and API keys both resolve to account-scoped access, but they remain distinct actor types for authorization and logging purposes.
 
 The signup UX does not need advanced polish in v1, but better-auth-backed signup, sign-in, and sign-out flows are in scope because the admin/customer UI requires them.
 
@@ -225,7 +222,7 @@ Requirements:
 
 - the product GraphQL API must support two auth modes: better-auth session auth for human users and API-key auth for programmatic clients
 - both auth modes must resolve to a normalized account context
-- the active auth mode must remain visible to resolvers, services, and audit logging
+- the active auth mode must remain visible to resolvers, services, and structured logging
 - each GraphQL operation must explicitly declare whether it allows `session`, `api_key`, or both
 - each API key belongs to one account
 - API-key lifecycle management must be implemented through the better-auth server instance and its API-key capability
@@ -457,31 +454,7 @@ At minimum, the system must support:
 - suppression check before delivery
 - suppression check during GraphQL acceptance before the message is accepted
 
-## 7.16 Rate limiting
-
-The system must support rate limiting.
-
-At minimum:
-
-- per API key rate limiting
-- optional per account rate limiting
-- clear error response when exceeded
-
-The implementation must not rely on single-process assumptions that would block distributed rate limiting.
-
-## 7.17 Auditability
-
-The system must record operationally important actions.
-
-At minimum:
-
-- API key creation
-- API key revocation
-- domain creation
-- domain verification changes
-- manual suppression actions
-
-## 7.18 Status retrieval queries
+## 7.16 Status retrieval queries
 
 GraphQL must expose message lookup for the authenticated account.
 
@@ -720,21 +693,7 @@ Fields:
 - expiresAt
 - createdAt
 
-## 9.9 AuditLog
-
-Fields:
-
-- id
-- accountId
-- actorType
-- actorId
-- action
-- targetType
-- targetId
-- detailsJson
-- createdAt
-
-## 9.10 GraphileWorker
+## 9.9 GraphileWorker
 
 Graphile Worker is required for async job execution.
 
@@ -795,14 +754,11 @@ Structured logs must avoid:
 - full API keys
 - sensitive internal credentials
 
-## 10.6 Abuse prevention
+## 10.6 Recipient safety
 
-At minimum the design must leave room for:
+At minimum:
 
-- rate limiting
-- account suspension
-- domain pause/disable
-- recipient suppression
+- recipient suppression must be enforced during message acceptance and before delivery
 
 ---
 
@@ -819,12 +775,6 @@ Requirements:
 - machine-readable failure codes
 - timestamps for key state transitions
 - health and readiness signals for self-hosted operators
-
-Optional in v1:
-
-- metrics counters for accepts, rejects, retries, failures
-- latency histograms
-- Graphile Worker queue depth metrics
 
 ---
 
@@ -867,21 +817,15 @@ Rules:
 
 ---
 
-## 13. Horizontal scaling requirements
+## 13. MVP scope note
 
-Even though the first release is a monolith, the implementation must preserve a path to scale-out.
+The MVP is intentionally scoped to a single self-hosted deployment model.
 
 Requirements:
 
-- TanStack Start app instances are stateless
-- worker instances are stateless
-- Relay environment behavior must not be relied on for correctness on the server side
-- all durable state lives in shared persistence
-- Graphile Worker queue semantics must support multiple consumers safely
-- retries are idempotent
-- duplicate processing is tolerated safely
-- rate limiting must not rely on in-memory per-process counters for correctness
-- request handling does not depend on local memory caches for correctness
+- correctness must not rely on in-memory state that would make routine restarts unsafe
+- durable state must live in PostgreSQL rather than transient process memory
+- deeper multi-instance horizontal-scaling hardening is deferred to the backlog
 
 ---
 
@@ -923,10 +867,7 @@ Critical scenarios to test:
 
 The code must not hard-wire transport logic directly into GraphQL resolvers or general business logic.
 
-Define an internal outbound transport abstraction that preserves future support for:
-
-- direct SMTP
-- internal MTA pipeline
+Define an internal outbound transport abstraction for direct SMTP delivery in v1.
 
 The system must not rely on third-party cloud email providers for message delivery.
 
@@ -1001,12 +942,18 @@ These should not be implemented unless explicitly pulled into scope later:
 - domain warm-up orchestration
 - customer webhooks
 - advanced dashboard UX beyond the basic admin/customer configuration UI
+- account- or key-level rate limiting
+- audit log persistence and audit log UI/reporting
+- advanced metrics and queue-depth monitoring
+- domain pause/disable policy controls
+- multi-instance horizontal-scaling hardening
 
 ---
 
 # 18. Task breakdown
 
 The tasks below are intentionally small so generated code can be reviewed incrementally.
+Tasks explicitly labeled `Backlog` are deferred and should not be treated as required for the MVP.
 
 ## Phase A — repository and tooling foundation
 
@@ -1142,8 +1089,8 @@ Add the delivery attempts schema including recipient linkage and SMTP target met
 ### T42. Create suppressions table
 Add the suppressions schema.
 
-### T43. Create audit_logs table
-Add the audit logs schema.
+### T43. Backlog — Create audit_logs table
+Add the audit logs schema if audit-log persistence is later pulled into scope.
 
 ### T44. Integrate Graphile Worker schema and configuration
 Add Graphile Worker setup, migrations, and runtime configuration backed by PostgreSQL.
@@ -1180,8 +1127,8 @@ Add typed persistence functions for per-recipient delivery attempts and attempt 
 ### T54. Implement suppression repository
 Add typed persistence functions for suppression checks and mutations.
 
-### T55. Implement audit log repository
-Add typed persistence functions for audit events.
+### T55. Backlog — Implement audit log repository
+Add typed persistence functions for audit events if audit-log persistence is later pulled into scope.
 
 ### T56. Implement Graphile Worker enqueue integration
 Add typed enqueue helpers and Graphile Worker integration for delivery jobs.
@@ -1261,8 +1208,8 @@ Inspect SPF DNS presence/readiness and return warnings or readiness details.
 ### T79. Implement domain verification service
 Combine the DNS checks and update domain status deterministically.
 
-### T80. Implement domain pause/disable capability in service layer
-Allow internal policy to pause or disable domains cleanly.
+### T80. Backlog — Implement domain pause/disable capability in service layer
+Allow internal policy to pause or disable domains cleanly if that control is later pulled into scope.
 
 ## Phase H — message acceptance services
 
@@ -1437,14 +1384,14 @@ Map typed domain errors to stable HTTP responses.
 ### T123. Add message status transition logging
 Log important status transitions with message ID.
 
-### T124. Add audit logging hooks
-Write audit log records for key operational actions.
+### T124. Backlog — Add audit logging hooks
+Write audit log records for key operational actions if audit logging is later pulled into scope.
 
-### T125. Add metrics hooks
-Add metrics counters and timers for key flows.
+### T125. Backlog — Add metrics hooks
+Add metrics counters and timers for key flows if advanced metrics are later pulled into scope.
 
-### T126. Add rate limiting middleware
-Add per-key and/or per-account rate limiting.
+### T126. Backlog — Add rate limiting middleware
+Add per-key and/or per-account rate limiting if abuse-control requirements are later pulled into scope.
 
 ## Phase M — test coverage
 
@@ -1513,8 +1460,8 @@ Add indexes needed for lookup paths, queue claiming, and idempotency checks.
 ### T147. Review transaction boundaries
 Verify correctness for domain creation, message acceptance, and worker transitions.
 
-### T148. Review horizontal-scaling assumptions
-Check for in-memory correctness dependencies and remove them.
+### T148. Backlog — Review horizontal-scaling assumptions
+Check for multi-instance correctness dependencies if deeper scale-out hardening is later pulled into scope.
 
 ### T149. Review Relay schema ergonomics
 Ensure the schema shape remains practical for fragment colocation, pagination, and mutation updates.
@@ -1545,15 +1492,18 @@ Document first-install steps, runtime dependencies, migration workflow, upgrade 
 
 Use this order when driving a coding agent:
 
+Skip tasks explicitly labeled `Backlog`.
+
 1. T01-T23
 2. T24-T46
 3. T47-T73
 4. T74-T88
 5. T152-T161
-6. T89-T126
-7. T127-T150
-8. T162-T165
-9. T151
+6. T89-T123
+7. T127-T147
+8. T149-T150
+9. T162-T165
+10. T151
 
 This sequence keeps each review slice focused and limits cross-cutting rework.
 
@@ -1578,7 +1528,6 @@ The v1 implementation is considered complete when all of the following are true:
 - the system can run in a standard Node.js containerized deployment
 - the system exposes health and readiness checks suitable for self-hosted operation
 - self-hosted installation, upgrade, and backup/restore expectations are documented
-- the system preserves a path to future horizontal scaling
 
 ---
 
@@ -1608,3 +1557,18 @@ These items are intentionally deferred and should not be treated as required for
 
 ### B01. Add automated domain verification re-check scheduling
 Periodically re-check DNS for domains that are not yet sendable, persist the latest verification result, and schedule the work in a way that remains safe under multiple worker instances.
+
+### B02. Add account- and key-level rate limiting
+Add explicit abuse-control rate limiting once the MVP send flow is stable and real usage patterns are understood.
+
+### B03. Add audit log persistence and audit views
+Persist operational audit records and expose them through operator-facing tooling if audit requirements become important.
+
+### B04. Add advanced metrics and queue-depth monitoring
+Expose richer counters, histograms, and queue-depth visibility once baseline structured logging and health checks are in place.
+
+### B05. Add domain pause/disable policy controls
+Introduce explicit domain-level pause and disable controls if operational policy enforcement becomes necessary.
+
+### B06. Add deeper multi-instance horizontal-scaling hardening
+Harden for more advanced scale-out scenarios after the single-deployment self-hosted MVP is proven.
