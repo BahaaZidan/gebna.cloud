@@ -340,7 +340,7 @@ Create the typed direct-delivery and DKIM transport configuration layer.
 ### T14. Done — Add outbound message builder
 Build the RFC 5322 message payload and SMTP envelope.
 
-### T15. Add DKIM signing
+### T15. Done — Add DKIM signing
 Implement DKIM signing for outbound messages using the configured selector and private key.
 
 ### T16. Add MX lookup service
