@@ -367,7 +367,7 @@ Log send success and failure events without leaking secrets or full message bodi
 ### T23. Done — Add validation tests
 Test request schema and email validation behavior.
 
-### T24. Add secret auth tests
+### T24. Done — Add secret auth tests
 Test missing-secret and wrong-secret cases.
 
 ### T25. Add send service tests
