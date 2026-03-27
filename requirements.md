@@ -322,7 +322,7 @@ Create request ID generation and propagation utilities.
 ### T08. Done — Add structured logger
 Create a structured logger with redaction support.
 
-### T09. Add health endpoint
+### T09. Done — Add health endpoint
 Implement `GET /healthz`.
 
 ### T10. Add secret auth middleware
