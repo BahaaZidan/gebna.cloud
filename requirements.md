@@ -346,7 +346,7 @@ Implement DKIM signing for outbound messages using the configured selector and p
 ### T16. Done — Add MX lookup service
 Implement recipient-domain MX resolution and target selection.
 
-### T17. Add direct SMTP client
+### T17. Done — Add direct SMTP client
 Implement the direct SMTP session flow, including EHLO and STARTTLS handling.
 
 ### T18. Add synchronous send service
