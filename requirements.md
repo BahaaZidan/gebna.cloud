@@ -379,7 +379,7 @@ Test end-to-end request handling for the send endpoint.
 ### T27. Done — Add health endpoint tests
 Test `GET /healthz`.
 
-### T28. Produce README
+### T28. Done — Produce README
 Document startup, environment variables, DKIM DNS expectations, direct-delivery prerequisites, request format, secret header usage, and self-hosting instructions.
 
 ---

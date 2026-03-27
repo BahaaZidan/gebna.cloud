@@ -143,6 +143,29 @@ Optional:
 
 - HTTP listen port
 
+## Install And Run
+
+Install dependencies:
+
+```bash
+pnpm install
+```
+
+Run the checks:
+
+```bash
+pnpm test
+pnpm typecheck
+```
+
+Start the service:
+
+```bash
+node --import tsx src/index.ts
+```
+
+The service listens on `PORT` when set, otherwise `3000`.
+
 ## Example Environment
 
 ```env
@@ -253,13 +276,11 @@ Expected machine-readable error codes:
 
 - `UNAUTHORIZED`
 - `INVALID_REQUEST`
-- `INVALID_FROM`
-- `INVALID_RECIPIENT`
-- `INVALID_REPLY_TO`
 - `MX_LOOKUP_FAILED`
 - `SMTP_TEMPORARY_FAILURE`
 - `SMTP_PERMANENT_FAILURE`
 - `INTERNAL_ERROR`
+- `NOT_FOUND`
 
 Typical meanings:
 
@@ -267,9 +288,14 @@ Typical meanings:
 
 - Missing or wrong `x-api-secret`
 
-`INVALID_FROM`
+`INVALID_REQUEST`
 
-- `from` is missing, malformed, or outside `OUTBOUND_FROM_DOMAIN`
+- The JSON body is malformed
+- A required field is missing
+- `from` is outside `OUTBOUND_FROM_DOMAIN`
+- a recipient is invalid
+- `text` and `html` are both missing
+- `headers` is not a flat string-to-string object
 
 `MX_LOOKUP_FAILED`
 
@@ -283,6 +309,10 @@ Typical meanings:
 `SMTP_PERMANENT_FAILURE`
 
 - Remote server returned a permanent SMTP failure
+
+`NOT_FOUND`
+
+- Any route other than `GET /healthz` and `POST /send`
 
 ## Deliverability Caveats
 
@@ -363,11 +393,13 @@ The service should never log:
 
 ## Health Checks
 
-`GET /healthz` should be suitable for container health checks.
+`GET /healthz` is suitable for container health checks.
 
-It should not require authentication.
+It does not require authentication and currently returns:
 
-It should reflect whether the service is up enough to accept requests.
+```json
+{ "ok": true }
+```
 
 ## Scope Reminder
 
