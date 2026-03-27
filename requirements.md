@@ -313,7 +313,7 @@ Set up the test runner and base config.
 ### T05. Done — Add environment config loader
 Create typed environment variable loading and validation.
 
-### T06. Add HTTP server bootstrap
+### T06. Done — Add HTTP server bootstrap
 Create the HTTP server bootstrap and lifecycle wiring.
 
 ### T07. Add request ID support
