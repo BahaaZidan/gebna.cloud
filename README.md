@@ -158,13 +158,58 @@ pnpm test
 pnpm typecheck
 ```
 
+Build the production bundle:
+
+```bash
+pnpm build
+```
+
 Start the service:
+
+```bash
+pnpm start
+```
+
+For local development without building first:
 
 ```bash
 node --import tsx src/index.ts
 ```
 
 The service listens on `PORT` when set, otherwise `3000`.
+
+## Docker / Coolify
+
+This repo now includes a production `Dockerfile` suitable for a Coolify-style Docker deployment.
+
+Build the image:
+
+```bash
+docker build -t gebna-cloud .
+```
+
+Run it:
+
+```bash
+docker run --rm -p 3000:3000 \
+  -e OUTBOUND_API_SECRET=super-secret-value \
+  -e OUTBOUND_FROM_DOMAIN=gebna.net \
+  -e OUTBOUND_EHLO_HOSTNAME=mail.gebna.net \
+  -e OUTBOUND_RETURN_PATH=bounces@gebna.net \
+  -e DKIM_SELECTOR=s1 \
+  -e DKIM_PRIVATE_KEY='-----BEGIN PRIVATE KEY-----
+...
+-----END PRIVATE KEY-----' \
+  gebna-cloud
+```
+
+For Coolify specifically:
+
+- use the included `Dockerfile`
+- expose port `3000`
+- set all required environment variables
+- add a health check against `GET /healthz`
+- make sure the underlying host allows outbound TCP `25` and supports PTR/rDNS
 
 ## Example Environment
 

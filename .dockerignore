@@ -1,0 +1,12 @@
+.git
+.gitignore
+node_modules
+dist
+coverage
+.DS_Store
+*.log
+README.md
+requirements.md
+tests
+vitest.config.ts
+eslint.config.js
