@@ -328,7 +328,7 @@ Implement `GET /healthz`.
 ### T10. Done — Add secret auth middleware
 Implement `x-api-secret` authentication middleware.
 
-### T11. Add email validation utilities
+### T11. Done — Add email validation utilities
 Create parsing and validation utilities for email addresses, recipient lists, and sender-domain enforcement.
 
 ### T12. Add request schema validation
