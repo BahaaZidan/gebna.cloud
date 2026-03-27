@@ -364,7 +364,7 @@ Log request metadata, outcomes, and durations safely.
 ### T22. Done — Add send outcome logging
 Log send success and failure events without leaking secrets or full message bodies.
 
-### T23. Add validation tests
+### T23. Done — Add validation tests
 Test request schema and email validation behavior.
 
 ### T24. Add secret auth tests
