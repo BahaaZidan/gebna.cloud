@@ -349,7 +349,7 @@ Implement recipient-domain MX resolution and target selection.
 ### T17. Done — Add direct SMTP client
 Implement the direct SMTP session flow, including EHLO and STARTTLS handling.
 
-### T18. Add synchronous send service
+### T18. Done — Add synchronous send service
 Implement the synchronous direct-delivery send operation using MX lookup and the SMTP client.
 
 ### T19. Add `POST /send` endpoint
