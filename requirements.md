@@ -361,7 +361,7 @@ Map validation, auth, MX, and SMTP failures to stable HTTP responses.
 ### T21. Done — Add request logging
 Log request metadata, outcomes, and durations safely.
 
-### T22. Add send outcome logging
+### T22. Done — Add send outcome logging
 Log send success and failure events without leaking secrets or full message bodies.
 
 ### T23. Add validation tests

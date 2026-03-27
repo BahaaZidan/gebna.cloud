@@ -1,5 +1,6 @@
 import type { SendRequestBody } from "../http/send-schema.js";
 import { parseEmailAddress } from "../lib/email.js";
+import { createLogger } from "../lib/logger.js";
 
 import { applyDkimSignature } from "./dkim.js";
 import { buildOutboundMessage, type BuiltMessage } from "./message-builder.js";
@@ -11,6 +12,8 @@ import {
   SmtpTemporaryError,
 } from "./smtp.js";
 import type { OutboundTransportConfig } from "./transport-config.js";
+
+const logger = createLogger();
 
 export interface DeliveryAttempt {
   error?: string;
@@ -66,14 +69,30 @@ async function tryTarget(
   try {
     await sendDirectSmtpMessage(target, message, transportConfig);
 
+    logger.info("smtp.attempt.succeeded", {
+      exchange: target.exchange,
+      priority: target.priority,
+      recipientCount: message.envelope.to.length,
+    });
+
     return {
       exchange: target.exchange,
       priority: target.priority,
       success: true,
     };
   } catch (error) {
+    const errorMessage =
+      error instanceof Error ? error.message : "SMTP delivery failed.";
+
+    logger.warn("smtp.attempt.failed", {
+      error: errorMessage,
+      exchange: target.exchange,
+      priority: target.priority,
+      recipientCount: message.envelope.to.length,
+    });
+
     return {
-      error: error instanceof Error ? error.message : "SMTP delivery failed.",
+      error: errorMessage,
       exchange: target.exchange,
       priority: target.priority,
       success: false,
@@ -90,6 +109,15 @@ async function deliverToRecipientDomain(
   const domainMessage = createDomainMessage(message, recipients);
   const mxTargets = await resolveMxTargets(recipientDomain);
   const attempts: DeliveryAttempt[] = [];
+
+  logger.info("mx.targets.resolved", {
+    mxTargets: mxTargets.map((target) => ({
+      exchange: target.exchange,
+      priority: target.priority,
+    })),
+    recipientCount: recipients.length,
+    recipientDomain,
+  });
 
   for (const target of mxTargets) {
     const attempt = await tryTarget(target, domainMessage, transportConfig);
@@ -156,7 +184,25 @@ export async function sendMessage(
     deliveries.push(delivery);
   }
 
-  assertSuccessfulDeliveries(deliveries);
+  const totalRecipientCount = builtMessage.envelope.to.length;
+  const recipientDomains = deliveries.map((delivery) => delivery.recipientDomain);
+  try {
+    assertSuccessfulDeliveries(deliveries);
+  } catch (error) {
+    logger.warn("send.failed", {
+      deliveryCount: deliveries.length,
+      error: error instanceof Error ? error.message : "SMTP delivery failed.",
+      recipientCount: totalRecipientCount,
+      recipientDomains,
+    });
+    throw error;
+  }
+
+  logger.info("send.completed", {
+    deliveryCount: deliveries.length,
+    recipientCount: totalRecipientCount,
+    recipientDomains,
+  });
 
   return {
     deliveries,
