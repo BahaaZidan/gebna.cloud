@@ -373,7 +373,7 @@ Test missing-secret and wrong-secret cases.
 ### T25. Done — Add send service tests
 Test direct-delivery success and failure behavior, including DKIM signing and MX lookup handling.
 
-### T26. Add HTTP integration tests for `/send`
+### T26. Done — Add HTTP integration tests for `/send`
 Test end-to-end request handling for the send endpoint.
 
 ### T27. Add health endpoint tests
