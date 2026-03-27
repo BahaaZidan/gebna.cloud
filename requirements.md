@@ -355,7 +355,7 @@ Implement the synchronous direct-delivery send operation using MX lookup and the
 ### T19. Done — Add `POST /send` endpoint
 Implement the authenticated send endpoint.
 
-### T20. Add error mapping
+### T20. Done — Add error mapping
 Map validation, auth, MX, and SMTP failures to stable HTTP responses.
 
 ### T21. Add request logging

@@ -2,7 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 
 import { loadEnv } from "./config/env.js";
 import { applyRequestId } from "./http/request-id.js";
-import { INVALID_REQUEST_ERROR, INTERNAL_ERROR } from "./http/errors.js";
+import { INVALID_REQUEST_ERROR, mapErrorToHttpResponse } from "./http/errors.js";
 import { isAuthorized, UNAUTHORIZED_ERROR } from "./http/auth.js";
 import { readJsonBody, sendJson } from "./http/json.js";
 import { parseSendRequestBody } from "./http/send-schema.js";
@@ -61,8 +61,9 @@ async function handleRequest(
   if (request.method === "POST" && request.url === "/send") {
     try {
       await handleSendRequest(request, response);
-    } catch {
-      sendJson(response, 500, INTERNAL_ERROR);
+    } catch (error) {
+      const mappedError = mapErrorToHttpResponse(error);
+      sendJson(response, mappedError.statusCode, mappedError.body);
     }
 
     return;
