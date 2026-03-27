@@ -310,7 +310,7 @@ Set up ESLint and Prettier.
 ### T04. Done — Add test runner configuration
 Set up the test runner and base config.
 
-### T05. Add environment config loader
+### T05. Done — Add environment config loader
 Create typed environment variable loading and validation.
 
 ### T06. Add HTTP server bootstrap
