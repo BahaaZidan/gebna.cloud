@@ -376,7 +376,7 @@ Test direct-delivery success and failure behavior, including DKIM signing and MX
 ### T26. Done — Add HTTP integration tests for `/send`
 Test end-to-end request handling for the send endpoint.
 
-### T27. Add health endpoint tests
+### T27. Done — Add health endpoint tests
 Test `GET /healthz`.
 
 ### T28. Produce README
