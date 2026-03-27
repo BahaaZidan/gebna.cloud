@@ -307,7 +307,7 @@ Enable strict TypeScript settings.
 ### T03. Done — Add lint and format tooling
 Set up ESLint and Prettier.
 
-### T04. Add test runner configuration
+### T04. Done — Add test runner configuration
 Set up the test runner and base config.
 
 ### T05. Add environment config loader
