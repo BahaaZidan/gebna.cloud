@@ -301,7 +301,7 @@ Critical scenarios:
 ### T01. Done — Initialize Node.js service
 Create the basic Node.js service structure.
 
-### T02. Add strict TypeScript configuration
+### T02. Done — Add strict TypeScript configuration
 Enable strict TypeScript settings.
 
 ### T03. Add lint and format tooling
