@@ -370,7 +370,7 @@ Test request schema and email validation behavior.
 ### T24. Done — Add secret auth tests
 Test missing-secret and wrong-secret cases.
 
-### T25. Add send service tests
+### T25. Done — Add send service tests
 Test direct-delivery success and failure behavior, including DKIM signing and MX lookup handling.
 
 ### T26. Add HTTP integration tests for `/send`

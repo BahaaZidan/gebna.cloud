@@ -15,9 +15,12 @@ import type { OutboundTransportConfig } from "./transport-config.js";
 
 const logger = createLogger();
 
+type DeliveryFailureType = "permanent" | "protocol" | "temporary";
+
 export interface DeliveryAttempt {
   error?: string;
   exchange: string;
+  failureType?: DeliveryFailureType;
   priority: number;
   success: boolean;
 }
@@ -83,6 +86,12 @@ async function tryTarget(
   } catch (error) {
     const errorMessage =
       error instanceof Error ? error.message : "SMTP delivery failed.";
+    const failureType: DeliveryFailureType =
+      error instanceof SmtpTemporaryError
+        ? "temporary"
+        : error instanceof SmtpPermanentError
+          ? "permanent"
+          : "protocol";
 
     logger.warn("smtp.attempt.failed", {
       error: errorMessage,
@@ -94,6 +103,7 @@ async function tryTarget(
     return {
       error: errorMessage,
       exchange: target.exchange,
+      failureType,
       priority: target.priority,
       success: false,
     };
@@ -148,12 +158,13 @@ function assertSuccessfulDeliveries(results: DeliveryResult[]): void {
 
   const lastAttempt = failedDelivery.attempts.at(-1);
   const message = lastAttempt?.error ?? "SMTP delivery failed.";
+  const failureType = lastAttempt?.failureType;
 
-  if (message.includes(" 4")) {
+  if (failureType === "temporary") {
     throw new SmtpTemporaryError(message);
   }
 
-  if (message.includes(" 5")) {
+  if (failureType === "permanent") {
     throw new SmtpPermanentError(message);
   }
 
