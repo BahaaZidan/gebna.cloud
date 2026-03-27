@@ -331,7 +331,7 @@ Implement `x-api-secret` authentication middleware.
 ### T11. Done — Add email validation utilities
 Create parsing and validation utilities for email addresses, recipient lists, and sender-domain enforcement.
 
-### T12. Add request schema validation
+### T12. Done — Add request schema validation
 Validate the `POST /send` request body.
 
 ### T13. Add SMTP transport configuration
