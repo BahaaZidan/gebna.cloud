@@ -352,7 +352,7 @@ Implement the direct SMTP session flow, including EHLO and STARTTLS handling.
 ### T18. Done — Add synchronous send service
 Implement the synchronous direct-delivery send operation using MX lookup and the SMTP client.
 
-### T19. Add `POST /send` endpoint
+### T19. Done — Add `POST /send` endpoint
 Implement the authenticated send endpoint.
 
 ### T20. Add error mapping
