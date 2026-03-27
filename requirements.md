@@ -304,7 +304,7 @@ Create the basic Node.js service structure.
 ### T02. Done — Add strict TypeScript configuration
 Enable strict TypeScript settings.
 
-### T03. Add lint and format tooling
+### T03. Done — Add lint and format tooling
 Set up ESLint and Prettier.
 
 ### T04. Add test runner configuration
