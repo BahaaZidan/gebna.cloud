@@ -325,7 +325,7 @@ Create a structured logger with redaction support.
 ### T09. Done — Add health endpoint
 Implement `GET /healthz`.
 
-### T10. Add secret auth middleware
+### T10. Done — Add secret auth middleware
 Implement `x-api-secret` authentication middleware.
 
 ### T11. Add email validation utilities
