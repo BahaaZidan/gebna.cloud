@@ -3,7 +3,15 @@ import { createHash, createSign } from "node:crypto";
 import type { BuiltMessage } from "./message-builder.js";
 import type { DkimConfig } from "./transport-config.js";
 
-const DKIM_HEADER_NAMES = ["from", "to", "subject", "mime-version", "content-type"];
+const DKIM_HEADER_NAMES = [
+  "date",
+  "from",
+  "to",
+  "message-id",
+  "subject",
+  "mime-version",
+  "content-type",
+];
 
 function splitMessage(message: string): { body: string; headers: string[] } {
   const separator = "\r\n\r\n";
@@ -80,17 +88,7 @@ function createDkimHeader(
   bodyHash: string,
   signedHeaderNames: string,
 ): string {
-  return [
-    "DKIM-Signature:",
-    "v=1",
-    "a=rsa-sha256",
-    "c=simple/simple",
-    `d=${domain}`,
-    `s=${config.selector}`,
-    `h=${signedHeaderNames}`,
-    `bh=${bodyHash}`,
-    "b=",
-  ].join("; ");
+  return `DKIM-Signature: v=1; a=rsa-sha256; c=simple/simple; d=${domain}; s=${config.selector}; h=${signedHeaderNames}; bh=${bodyHash}; b=`;
 }
 
 export function applyDkimSignature(

@@ -215,6 +215,21 @@ function parseCapabilities(reply: SmtpReply): Set<string> {
   return capabilities;
 }
 
+async function identifyClient(
+  connection: SmtpConnection,
+  ehloHostname: string,
+): Promise<Set<string>> {
+  try {
+    const ehloReply = await connection.sendCommand(`EHLO ${ehloHostname}`);
+    assertPositiveReply(ehloReply, "EHLO failed");
+    return parseCapabilities(ehloReply);
+  } catch {
+    const heloReply = await connection.sendCommand(`HELO ${ehloHostname}`);
+    assertPositiveReply(heloReply, "HELO failed");
+    return new Set<string>();
+  }
+}
+
 async function sendEnvelope(
   connection: SmtpConnection,
   message: BuiltMessage,
@@ -248,19 +263,19 @@ export async function sendDirectSmtpMessage(
   try {
     assertPositiveReply(await connection.readReply(), "SMTP greeting failed");
 
-    const ehloReply = await connection.sendCommand(`EHLO ${transportConfig.ehloHostname}`);
-    assertPositiveReply(ehloReply, "EHLO failed");
-
-    const capabilities = parseCapabilities(ehloReply);
+    const capabilities = await identifyClient(
+      connection,
+      transportConfig.ehloHostname,
+    );
 
     if (capabilities.has("STARTTLS")) {
       assertPositiveReply(await connection.sendCommand("STARTTLS"), "STARTTLS failed");
       await connection.upgradeToTls(target.exchange);
 
-      const tlsEhloReply = await connection.sendCommand(
-        `EHLO ${transportConfig.ehloHostname}`,
+      await identifyClient(
+        connection,
+        transportConfig.ehloHostname,
       );
-      assertPositiveReply(tlsEhloReply, "EHLO after STARTTLS failed");
     }
 
     await sendEnvelope(connection, message);

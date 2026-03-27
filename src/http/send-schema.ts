@@ -4,7 +4,9 @@ export interface SendRequestBody {
   bcc?: string[];
   cc?: string[];
   from?: string;
-  headers?: Record<string, string>;
+  headers: Record<string, string> & {
+    "Message-ID": string;
+  };
   html?: string;
   replyTo?: string;
   subject: string;
@@ -12,11 +14,49 @@ export interface SendRequestBody {
   to: string[];
 }
 
+const FORBIDDEN_HEADER_NAMES = new Set([
+  "bcc",
+  "cc",
+  "content-type",
+  "date",
+  "dkim-signature",
+  "from",
+  "mime-version",
+  "reply-to",
+  "subject",
+  "to",
+]);
+
+const HEADER_NAME_PATTERN = /^[A-Za-z0-9-]+$/;
+const MESSAGE_ID_PATTERN = /^<[^<>\r\n]+>$/;
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function parseNonEmptyString(value: unknown): string | null {
+function containsUnsafeHeaderText(value: string): boolean {
+  return value.includes("\r") || value.includes("\n");
+}
+
+function parseNonEmptyHeaderString(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const normalized = value.trim();
+
+  if (normalized.length === 0) {
+    return null;
+  }
+
+  if (containsUnsafeHeaderText(normalized)) {
+    return null;
+  }
+
+  return normalized;
+}
+
+function parseNonEmptyBodyString(value: unknown): string | null {
   if (typeof value !== "string") {
     return null;
   }
@@ -30,7 +70,9 @@ function parseNonEmptyString(value: unknown): string | null {
   return normalized;
 }
 
-function parseHeaders(value: unknown): Record<string, string> | null {
+function parseHeaders(
+  value: unknown,
+): (Record<string, string> & { "Message-ID": string }) | null {
   if (!isPlainObject(value)) {
     return null;
   }
@@ -38,14 +80,39 @@ function parseHeaders(value: unknown): Record<string, string> | null {
   const entries: Array<readonly [string, string]> = [];
 
   for (const [key, headerValue] of Object.entries(value)) {
-    if (typeof headerValue !== "string") {
+    const normalizedKey = key.trim();
+    const lowerCaseKey = normalizedKey.toLowerCase();
+
+    if (
+      normalizedKey.length === 0 ||
+      !HEADER_NAME_PATTERN.test(normalizedKey) ||
+      FORBIDDEN_HEADER_NAMES.has(lowerCaseKey)
+    ) {
       return null;
     }
 
-    entries.push([key, headerValue] as const);
+    if (
+      typeof headerValue !== "string" ||
+      containsUnsafeHeaderText(headerValue) ||
+      headerValue.trim().length === 0
+    ) {
+      return null;
+    }
+
+    entries.push([
+      lowerCaseKey === "message-id" ? "Message-ID" : normalizedKey,
+      headerValue.trim(),
+    ] as const);
   }
 
-  return Object.fromEntries(entries);
+  const parsedHeaders = Object.fromEntries(entries);
+  const messageId = parsedHeaders["Message-ID"];
+
+  if (messageId === undefined || !MESSAGE_ID_PATTERN.test(messageId)) {
+    return null;
+  }
+
+  return parsedHeaders as Record<string, string> & { "Message-ID": string };
 }
 
 function parseOptionalRecipients(value: unknown): string[] | null | undefined {
@@ -71,12 +138,13 @@ export function parseSendRequestBody(
   const to = parseOptionalRecipients(value.to);
   const cc = parseOptionalRecipients(value.cc);
   const bcc = parseOptionalRecipients(value.bcc);
-  const subject = parseNonEmptyString(value.subject);
-  const text = value.text === undefined ? undefined : parseNonEmptyString(value.text);
-  const html = value.html === undefined ? undefined : parseNonEmptyString(value.html);
-  const from = value.from === undefined ? undefined : parseNonEmptyString(value.from);
+  const subject = parseNonEmptyHeaderString(value.subject);
+  const text = value.text === undefined ? undefined : parseNonEmptyBodyString(value.text);
+  const html = value.html === undefined ? undefined : parseNonEmptyBodyString(value.html);
+  const from =
+    value.from === undefined ? undefined : parseNonEmptyHeaderString(value.from);
   const replyTo =
-    value.replyTo === undefined ? undefined : parseNonEmptyString(value.replyTo);
+    value.replyTo === undefined ? undefined : parseNonEmptyHeaderString(value.replyTo);
   const headers = value.headers === undefined ? undefined : parseHeaders(value.headers);
 
   if (to === null || to === undefined) {
@@ -107,7 +175,7 @@ export function parseSendRequestBody(
     return null;
   }
 
-  if (headers === null) {
+  if (headers === null || headers === undefined) {
     return null;
   }
 
@@ -115,7 +183,7 @@ export function parseSendRequestBody(
     ...(bcc === undefined ? {} : { bcc }),
     ...(cc === undefined ? {} : { cc }),
     ...(from === undefined ? {} : { from }),
-    ...(headers === undefined ? {} : { headers }),
+    headers,
     ...(html === undefined ? {} : { html }),
     ...(replyTo === undefined ? {} : { replyTo }),
     ...(text === undefined ? {} : { text }),

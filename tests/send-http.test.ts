@@ -112,6 +112,9 @@ describe("POST /send", () => {
   it("rejects requests with a missing secret", async () => {
     const response = await requestJson(server, {
       body: {
+        headers: {
+          "Message-ID": "<missing-secret@gebna.net>",
+        },
         subject: "Hello",
         text: "Body",
         to: "user@example.com",
@@ -161,6 +164,9 @@ describe("POST /send", () => {
     const response = await requestJson(server, {
       body: {
         from: "sender@gebna.net",
+        headers: {
+          "Message-ID": "<success@gebna.net>",
+        },
         subject: "Hello",
         text: "Body",
         to: "user@example.com",
@@ -185,6 +191,9 @@ describe("POST /send", () => {
 
     const response = await requestJson(server, {
       body: {
+        headers: {
+          "Message-ID": "<mx-failure@gebna.net>",
+        },
         subject: "Hello",
         text: "Body",
         to: "user@example.com",
@@ -210,6 +219,9 @@ describe("POST /send", () => {
 
     const response = await requestJson(server, {
       body: {
+        headers: {
+          "Message-ID": "<smtp-failure@gebna.net>",
+        },
         subject: "Hello",
         text: "Body",
         to: "user@example.com",

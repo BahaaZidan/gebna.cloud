@@ -125,6 +125,8 @@ Required fields:
 
 - `to`
 - `subject`
+- `headers`
+- `headers.Message-ID`
 
 At least one of the following must be present:
 
@@ -137,7 +139,6 @@ Optional fields:
 - `cc`
 - `bcc`
 - `replyTo`
-- `headers`
 
 Rules:
 
@@ -146,9 +147,14 @@ Rules:
 - every email address must be validated
 - empty recipient lists are invalid
 - `subject` must be a non-empty string
+- `subject` must not contain CR or LF characters
 - at least one of `text` or `html` must be non-empty
 - `replyTo`, if provided, must be a valid email address
 - `headers`, if provided, must be a flat string-to-string map
+- `headers` must include a valid `Message-ID`
+- header names must use safe token characters only
+- header names and values must not contain CR or LF characters
+- callers must not override service-owned headers such as `From`, `To`, `Cc`, `Subject`, `Reply-To`, `Content-Type`, `MIME-Version`, or `DKIM-Signature`
 
 ## 7.3 Response format
 
@@ -192,6 +198,7 @@ Requirements:
 
 - DKIM signing configuration must come from environment variables
 - the service must resolve recipient-domain MX records
+- null MX responses must be treated as non-deliverable
 - the service must attempt delivery directly to the resolved recipient MX hosts
 - the service must identify itself with the configured `OUTBOUND_EHLO_HOSTNAME`
 - the service must build a valid SMTP envelope
@@ -200,6 +207,8 @@ Requirements:
 - the service must set the `From` header from the caller-provided `from` value after validating that it belongs to the configured domain
 - the service must use the configured `OUTBOUND_RETURN_PATH` as the envelope sender
 - the service must set `Reply-To` from request input when provided, otherwise from static configuration when configured
+- the service must require the caller to provide `Message-ID`
+- the service must generate a `Date` header
 - the service must support `to`, `cc`, and `bcc`
 - the service must support plain text and HTML content
 - the service must support SMTP over port `25` with STARTTLS when the remote server offers it

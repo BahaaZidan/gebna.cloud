@@ -87,6 +87,9 @@ mQ5nV8sC2pQ9wR3kX7uN1vQ4rP8kV2oN6wR9uX3mQ6nV9sC3pQ1wR4kX8uN2vQ5rP
 
 const request: SendRequestBody = {
   from: "sender@gebna.net",
+  headers: {
+    "Message-ID": "<test-send@gebna.net>",
+  },
   subject: "Hello",
   text: "Body",
   to: ["user@example.com"],

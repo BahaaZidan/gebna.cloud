@@ -231,6 +231,8 @@ Required JSON fields:
 - `to`
 - `subject`
 - at least one of `text` or `html`
+- `headers`
+- `headers.Message-ID`
 
 Optional JSON fields:
 
@@ -238,7 +240,6 @@ Optional JSON fields:
 - `cc`
 - `bcc`
 - `replyTo`
-- `headers`
 
 ### Request Rules
 
@@ -246,8 +247,12 @@ Optional JSON fields:
 - `to`, `cc`, and `bcc` may be a string or an array of strings
 - all addresses must be valid
 - `subject` must be non-empty
+- `subject` must not contain CR or LF characters
 - at least one of `text` or `html` must be non-empty
 - `headers` must be a flat string-to-string object
+- `headers` must include a valid `Message-ID` like `<abc123@gebna.net>`
+- custom header names and values must not contain CR or LF characters
+- custom headers may not override service-owned headers such as `From`, `To`, `Cc`, `Subject`, `Reply-To`, `Content-Type`, `MIME-Version`, or `DKIM-Signature`
 
 ### Example Request
 
@@ -265,6 +270,7 @@ curl -X POST http://localhost:3000/send \
     "html": "<p>Hello from <strong>gebna.cloud</strong></p>",
     "replyTo": "reply@gebna.net",
     "headers": {
+      "Message-ID": "<test-123@gebna.net>",
       "X-App": "gebna-cloud"
     }
   }'
@@ -295,11 +301,14 @@ Typical meanings:
 - `from` is outside `OUTBOUND_FROM_DOMAIN`
 - a recipient is invalid
 - `text` and `html` are both missing
+- `headers.Message-ID` is missing or invalid
+- a header name or value contains CR or LF
 - `headers` is not a flat string-to-string object
 
 `MX_LOOKUP_FAILED`
 
 - No MX could be resolved for the recipient domain, or DNS resolution failed
+- The recipient domain explicitly publishes null MX and does not accept email
 
 `SMTP_TEMPORARY_FAILURE`
 

@@ -17,6 +17,10 @@ function formatHeader(name: string, value: string): string {
   return `${name}: ${value}`;
 }
 
+function createDateHeaderValue(): string {
+  return new Date().toUTCString();
+}
+
 function formatAddressList(addresses: string[]): string {
   return addresses.join(", ");
 }
@@ -36,8 +40,10 @@ function buildHeaders(
   const from = request.from ?? transportConfig.returnPath;
   const replyTo = request.replyTo ?? transportConfig.replyTo;
   const headers = [
+    formatHeader("Date", createDateHeaderValue()),
     formatHeader("From", from),
     formatHeader("To", formatAddressList(request.to)),
+    formatHeader("Message-ID", request.headers["Message-ID"]),
     formatHeader("Subject", request.subject),
     formatHeader("MIME-Version", "1.0"),
   ];
@@ -50,10 +56,12 @@ function buildHeaders(
     headers.push(formatHeader("Reply-To", replyTo));
   }
 
-  if (request.headers !== undefined) {
-    for (const [name, value] of Object.entries(request.headers)) {
-      headers.push(formatHeader(name, value));
+  for (const [name, value] of Object.entries(request.headers)) {
+    if (name.toLowerCase() === "message-id") {
+      continue;
     }
+
+    headers.push(formatHeader(name, value));
   }
 
   if (request.text !== undefined && request.html !== undefined) {
