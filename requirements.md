@@ -337,7 +337,7 @@ Validate the `POST /send` request body.
 ### T13. Done — Add SMTP transport configuration
 Create the typed direct-delivery and DKIM transport configuration layer.
 
-### T14. Add outbound message builder
+### T14. Done — Add outbound message builder
 Build the RFC 5322 message payload and SMTP envelope.
 
 ### T15. Add DKIM signing
