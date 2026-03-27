@@ -298,7 +298,7 @@ Critical scenarios:
 
 ## 15. Task breakdown
 
-### T01. Initialize Node.js service
+### T01. Done — Initialize Node.js service
 Create the basic Node.js service structure.
 
 ### T02. Add strict TypeScript configuration

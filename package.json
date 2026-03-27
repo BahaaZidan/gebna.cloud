@@ -1,0 +1,10 @@
+{
+  "name": "gebna-cloud",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Small self-hosted outbound email sender for one domain.",
+  "type": "module",
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
