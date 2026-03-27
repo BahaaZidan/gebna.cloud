@@ -316,7 +316,7 @@ Create typed environment variable loading and validation.
 ### T06. Done — Add HTTP server bootstrap
 Create the HTTP server bootstrap and lifecycle wiring.
 
-### T07. Add request ID support
+### T07. Done — Add request ID support
 Create request ID generation and propagation utilities.
 
 ### T08. Add structured logger
