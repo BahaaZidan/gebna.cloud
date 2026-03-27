@@ -334,7 +334,7 @@ Create parsing and validation utilities for email addresses, recipient lists, an
 ### T12. Done — Add request schema validation
 Validate the `POST /send` request body.
 
-### T13. Add SMTP transport configuration
+### T13. Done — Add SMTP transport configuration
 Create the typed direct-delivery and DKIM transport configuration layer.
 
 ### T14. Add outbound message builder
