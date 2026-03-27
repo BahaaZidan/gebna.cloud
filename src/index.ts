@@ -6,9 +6,12 @@ import { INVALID_REQUEST_ERROR, mapErrorToHttpResponse } from "./http/errors.js"
 import { isAuthorized, UNAUTHORIZED_ERROR } from "./http/auth.js";
 import { readJsonBody, sendJson } from "./http/json.js";
 import { parseSendRequestBody } from "./http/send-schema.js";
+import { createLogger } from "./lib/logger.js";
 import { createHttpServer, startHttpServer } from "./server.js";
 import { sendMessage } from "./services/send.js";
 import { createOutboundTransportConfig } from "./services/transport-config.js";
+
+const logger = createLogger();
 
 function handleHealthCheck(response: ServerResponse): void {
   sendJson(response, 200, { ok: true });
@@ -51,25 +54,38 @@ async function handleRequest(
   request: IncomingMessage,
   response: ServerResponse,
 ): Promise<void> {
-  applyRequestId(request, response);
+  const requestId = applyRequestId(request, response);
+  const startedAt = process.hrtime.bigint();
 
-  if (request.method === "GET" && request.url === "/healthz") {
-    handleHealthCheck(response);
-    return;
-  }
-
-  if (request.method === "POST" && request.url === "/send") {
-    try {
-      await handleSendRequest(request, response);
-    } catch (error) {
-      const mappedError = mapErrorToHttpResponse(error);
-      sendJson(response, mappedError.statusCode, mappedError.body);
+  try {
+    if (request.method === "GET" && request.url === "/healthz") {
+      handleHealthCheck(response);
+      return;
     }
 
-    return;
-  }
+    if (request.method === "POST" && request.url === "/send") {
+      try {
+        await handleSendRequest(request, response);
+      } catch (error) {
+        const mappedError = mapErrorToHttpResponse(error);
+        sendJson(response, mappedError.statusCode, mappedError.body);
+      }
 
-  sendJson(response, 404, { error: { code: "NOT_FOUND" } });
+      return;
+    }
+
+    sendJson(response, 404, { error: { code: "NOT_FOUND" } });
+  } finally {
+    const durationMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
+
+    logger.info("request.completed", {
+      durationMs,
+      method: request.method ?? "UNKNOWN",
+      path: request.url ?? "",
+      requestId,
+      statusCode: response.statusCode,
+    });
+  }
 }
 
 async function main(): Promise<void> {

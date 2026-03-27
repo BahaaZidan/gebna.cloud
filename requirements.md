@@ -358,7 +358,7 @@ Implement the authenticated send endpoint.
 ### T20. Done — Add error mapping
 Map validation, auth, MX, and SMTP failures to stable HTTP responses.
 
-### T21. Add request logging
+### T21. Done — Add request logging
 Log request metadata, outcomes, and durations safely.
 
 ### T22. Add send outcome logging
