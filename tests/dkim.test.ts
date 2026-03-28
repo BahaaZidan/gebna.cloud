@@ -40,6 +40,7 @@ describe("applyDkimSignature", () => {
 
     expect(signed.message.startsWith("DKIM-Signature: v=1;")).toBe(true);
     expect(signed.message.startsWith("DKIM-Signature:;")).toBe(false);
+    expect(signed.message).toContain(" c=relaxed/simple;");
     expect(signed.message).toContain(" h=date:from:to:message-id:subject:mime-version:content-type;");
   });
 });

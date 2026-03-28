@@ -88,7 +88,7 @@ function createDkimHeader(
   bodyHash: string,
   signedHeaderNames: string,
 ): string {
-  return `DKIM-Signature: v=1; a=rsa-sha256; c=simple/simple; d=${domain}; s=${config.selector}; h=${signedHeaderNames}; bh=${bodyHash}; b=`;
+  return `DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/simple; d=${domain}; s=${config.selector}; h=${signedHeaderNames}; bh=${bodyHash}; b=`;
 }
 
 export function applyDkimSignature(
