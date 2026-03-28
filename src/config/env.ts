@@ -1,3 +1,5 @@
+import { createPrivateKey } from "node:crypto";
+
 import * as v from "valibot";
 
 const EnvSchema = v.object({
@@ -27,8 +29,33 @@ function parseInteger(value: string | undefined): number | undefined {
   return Number.parseInt(value, 10);
 }
 
+function normalizeMultilineSecret(value: string): string {
+  const trimmed = value.trim();
+  const unquoted =
+    trimmed.startsWith('"') && trimmed.endsWith('"')
+      ? trimmed.slice(1, -1)
+      : trimmed;
+
+  return unquoted.replace(/\\n/g, "\n").trim();
+}
+
+function normalizeAndValidateDkimPrivateKey(value: string): string {
+  const normalizedValue = normalizeMultilineSecret(value);
+
+  try {
+    createPrivateKey(normalizedValue);
+  } catch (error) {
+    throw new Error("Invalid DKIM_PRIVATE_KEY: expected a valid PEM private key.", {
+      cause: error,
+    });
+  }
+
+  return normalizedValue;
+}
+
 export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
   const parsed = v.parse(EnvSchema, source);
+  const dkimPrivateKey = normalizeAndValidateDkimPrivateKey(parsed.DKIM_PRIVATE_KEY);
   const sendTimeoutMs = parseInteger(parsed.SEND_TIMEOUT_MS);
   const port = parseInteger(parsed.PORT);
   const env: AppEnv = {
@@ -37,7 +64,7 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
     OUTBOUND_EHLO_HOSTNAME: parsed.OUTBOUND_EHLO_HOSTNAME,
     OUTBOUND_RETURN_PATH: parsed.OUTBOUND_RETURN_PATH,
     DKIM_SELECTOR: parsed.DKIM_SELECTOR,
-    DKIM_PRIVATE_KEY: parsed.DKIM_PRIVATE_KEY,
+    DKIM_PRIVATE_KEY: dkimPrivateKey,
     ...(parsed.OUTBOUND_REPLY_TO === undefined
       ? {}
       : { OUTBOUND_REPLY_TO: parsed.OUTBOUND_REPLY_TO }),
