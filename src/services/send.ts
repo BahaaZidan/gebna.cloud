@@ -1,6 +1,6 @@
 import type { SendRequestBody } from "../http/send-schema.js";
 import { parseEmailAddress } from "../lib/email.js";
-import { createLogger } from "../lib/logger.js";
+import { createLogger, serializeError } from "../lib/logger.js";
 
 import { applyDkimSignature } from "./dkim.js";
 import { buildOutboundMessage, type BuiltMessage } from "./message-builder.js";
@@ -36,6 +36,20 @@ export interface SendResult {
   success: boolean;
 }
 
+export interface SendContext {
+  requestId?: string;
+}
+
+function createLogContext(context: SendContext): Record<string, string> {
+  if (context.requestId === undefined) {
+    return {};
+  }
+
+  return {
+    requestId: context.requestId,
+  };
+}
+
 function groupRecipientsByDomain(recipients: string[]): Map<string, string[]> {
   const groupedRecipients = new Map<string, string[]>();
 
@@ -68,11 +82,15 @@ async function tryTarget(
   target: MxTarget,
   message: BuiltMessage,
   transportConfig: OutboundTransportConfig,
+  context: SendContext,
 ): Promise<DeliveryAttempt> {
+  const logContext = createLogContext(context);
+
   try {
     await sendDirectSmtpMessage(target, message, transportConfig);
 
     logger.info("smtp.attempt.succeeded", {
+      ...logContext,
       exchange: target.exchange,
       priority: target.priority,
       recipientCount: message.envelope.to.length,
@@ -94,8 +112,9 @@ async function tryTarget(
           : "protocol";
 
     logger.warn("smtp.attempt.failed", {
-      error: errorMessage,
+      ...logContext,
       exchange: target.exchange,
+      ...serializeError(error),
       priority: target.priority,
       recipientCount: message.envelope.to.length,
     });
@@ -115,12 +134,15 @@ async function deliverToRecipientDomain(
   recipients: string[],
   message: BuiltMessage,
   transportConfig: OutboundTransportConfig,
+  context: SendContext,
 ): Promise<DeliveryResult> {
   const domainMessage = createDomainMessage(message, recipients);
   const mxTargets = await resolveMxTargets(recipientDomain);
   const attempts: DeliveryAttempt[] = [];
+  const logContext = createLogContext(context);
 
   logger.info("mx.targets.resolved", {
+    ...logContext,
     mxTargets: mxTargets.map((target) => ({
       exchange: target.exchange,
       priority: target.priority,
@@ -130,7 +152,7 @@ async function deliverToRecipientDomain(
   });
 
   for (const target of mxTargets) {
-    const attempt = await tryTarget(target, domainMessage, transportConfig);
+    const attempt = await tryTarget(target, domainMessage, transportConfig, context);
     attempts.push(attempt);
 
     if (attempt.success) {
@@ -174,6 +196,7 @@ function assertSuccessfulDeliveries(results: DeliveryResult[]): void {
 export async function sendMessage(
   request: SendRequestBody,
   transportConfig: OutboundTransportConfig,
+  context: SendContext = {},
 ): Promise<SendResult> {
   const builtMessage = buildOutboundMessage(request, transportConfig);
   const signedMessage = applyDkimSignature(
@@ -183,6 +206,7 @@ export async function sendMessage(
   );
   const groupedRecipients = groupRecipientsByDomain(builtMessage.envelope.to);
   const deliveries: DeliveryResult[] = [];
+  const logContext = createLogContext(context);
 
   for (const [recipientDomain, recipients] of groupedRecipients.entries()) {
     const delivery = await deliverToRecipientDomain(
@@ -190,6 +214,7 @@ export async function sendMessage(
       recipients,
       signedMessage,
       transportConfig,
+      context,
     );
 
     deliveries.push(delivery);
@@ -201,8 +226,9 @@ export async function sendMessage(
     assertSuccessfulDeliveries(deliveries);
   } catch (error) {
     logger.warn("send.failed", {
+      ...logContext,
       deliveryCount: deliveries.length,
-      error: error instanceof Error ? error.message : "SMTP delivery failed.",
+      ...serializeError(error),
       recipientCount: totalRecipientCount,
       recipientDomains,
     });
@@ -210,6 +236,7 @@ export async function sendMessage(
   }
 
   logger.info("send.completed", {
+    ...logContext,
     deliveryCount: deliveries.length,
     recipientCount: totalRecipientCount,
     recipientDomains,

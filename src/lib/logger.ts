@@ -77,6 +77,29 @@ export function redactFields(fields: LogFields): LogFields {
   return Object.fromEntries(redactedEntries);
 }
 
+export function serializeError(error: unknown): LogFields {
+  if (error instanceof Error) {
+    return {
+      errorMessage: error.message,
+      errorName: error.name,
+      ...(error.stack === undefined ? {} : { errorStack: error.stack }),
+      ...(error.cause === undefined
+        ? {}
+        : {
+            errorCause:
+              error.cause instanceof Error
+                ? `${error.cause.name}: ${error.cause.message}`
+                : String(error.cause),
+          }),
+    };
+  }
+
+  return {
+    errorValue:
+      typeof error === "string" ? error : JSON.stringify(error) ?? String(error),
+  };
+}
+
 function writeLog(level: LogLevel, event: string, fields: LogFields = {}): void {
   const record: LogRecord = {
     event,
@@ -86,12 +109,6 @@ function writeLog(level: LogLevel, event: string, fields: LogFields = {}): void 
   };
 
   const serializedRecord = JSON.stringify(record);
-
-  if (level === "error" || level === "warn") {
-    process.stderr.write(`${serializedRecord}\n`);
-    return;
-  }
-
   process.stdout.write(`${serializedRecord}\n`);
 }
 

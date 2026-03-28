@@ -6,11 +6,21 @@ import { INVALID_REQUEST_ERROR, mapErrorToHttpResponse } from "./http/errors.js"
 import { isAuthorized, UNAUTHORIZED_ERROR } from "./http/auth.js";
 import { readJsonBody, sendJson } from "./http/json.js";
 import { parseSendRequestBody } from "./http/send-schema.js";
-import { createLogger } from "./lib/logger.js";
+import { createLogger, serializeError } from "./lib/logger.js";
 import { sendMessage } from "./services/send.js";
 import { createOutboundTransportConfig } from "./services/transport-config.js";
 
 const logger = createLogger();
+
+function readMappedErrorCode(body: unknown): string | undefined {
+  if (typeof body !== "object" || body === null) {
+    return undefined;
+  }
+
+  const record = body as { error?: { code?: unknown } };
+
+  return typeof record.error?.code === "string" ? record.error.code : undefined;
+}
 
 function handleHealthCheck(response: ServerResponse): void {
   sendJson(response, 200, { ok: true });
@@ -20,6 +30,7 @@ async function handleSendRequest(
   env: AppEnv,
   request: IncomingMessage,
   response: ServerResponse,
+  requestId: string,
 ): Promise<void> {
   if (!isAuthorized(request.headers, env.OUTBOUND_API_SECRET)) {
     sendJson(response, 401, UNAUTHORIZED_ERROR);
@@ -43,7 +54,7 @@ async function handleSendRequest(
   }
 
   const transportConfig = createOutboundTransportConfig(env);
-  const result = await sendMessage(parsedRequest, transportConfig);
+  const result = await sendMessage(parsedRequest, transportConfig, { requestId });
 
   sendJson(response, 200, result);
 }
@@ -64,9 +75,19 @@ export function createAppHandler(env: AppEnv) {
 
       if (request.method === "POST" && request.url === "/send") {
         try {
-          await handleSendRequest(env, request, response);
+          await handleSendRequest(env, request, response, requestId);
         } catch (error) {
           const mappedError = mapErrorToHttpResponse(error);
+
+          logger.error("request.failed", {
+            ...serializeError(error),
+            errorCode: readMappedErrorCode(mappedError.body) ?? "UNKNOWN_ERROR",
+            method: request.method ?? "UNKNOWN",
+            path: request.url ?? "",
+            requestId,
+            statusCode: mappedError.statusCode,
+          });
+
           sendJson(response, mappedError.statusCode, mappedError.body);
         }
 
