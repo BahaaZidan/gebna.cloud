@@ -13,6 +13,10 @@ const DKIM_HEADER_NAMES = [
   "content-type",
 ];
 
+function normalizeLineEndings(value: string): string {
+  return value.replace(/\r?\n/g, "\r\n");
+}
+
 function splitMessage(message: string): { body: string; headers: string[] } {
   const separator = "\r\n\r\n";
   const separatorIndex = message.indexOf(separator);
@@ -34,7 +38,7 @@ function splitMessage(message: string): { body: string; headers: string[] } {
 }
 
 function canonicalizeBody(body: string): string {
-  return body.replace(/\r\n*$/, "\r\n");
+  return normalizeLineEndings(body).replace(/(?:\r\n)*$/, "\r\n");
 }
 
 function canonicalizeHeaderLine(headerLine: string): string {
@@ -96,7 +100,8 @@ export function applyDkimSignature(
   config: DkimConfig,
   domain: string,
 ): BuiltMessage {
-  const { body, headers } = splitMessage(builtMessage.message);
+  const normalizedMessage = normalizeLineEndings(builtMessage.message);
+  const { body, headers } = splitMessage(normalizedMessage);
   const canonicalizedHeaders = pickSignedHeaders(headers);
   const signedHeaderNames = canonicalizedHeaders
     .map((headerLine) => headerLine.split(":", 1)[0])
@@ -111,7 +116,7 @@ export function applyDkimSignature(
 
   const signature = signer.sign(config.privateKey, "base64");
   const signedHeader = `${dkimHeader}${signature}`;
-  const signedMessage = `${signedHeader}\r\n${builtMessage.message}`;
+  const signedMessage = `${signedHeader}\r\n${normalizedMessage}`;
 
   return {
     ...builtMessage,
