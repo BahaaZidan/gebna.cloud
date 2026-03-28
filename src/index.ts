@@ -10,17 +10,4 @@ async function main(): Promise<void> {
   await startHttpServer(server, port);
 }
 
-void main().catch((error: unknown) => {
-  if (error instanceof Error) {
-    console.error(error.message);
-
-    if (error.stack !== undefined) {
-      console.error(error.stack);
-    }
-  } else {
-    console.error("Startup failed.");
-    console.error(String(error));
-  }
-
-  process.exitCode = 1;
-});
+void main();
