@@ -31,12 +31,21 @@ function parseInteger(value: string | undefined): number | undefined {
 
 function normalizeMultilineSecret(value: string): string {
   const trimmed = value.trim();
+  const quoteCharacter = trimmed.at(0);
   const unquoted =
-    trimmed.startsWith('"') && trimmed.endsWith('"')
+    quoteCharacter !== undefined &&
+    quoteCharacter === trimmed.at(-1) &&
+    (quoteCharacter === '"' || quoteCharacter === "'" || quoteCharacter === "`")
       ? trimmed.slice(1, -1)
       : trimmed;
 
-  return unquoted.replace(/\\n/g, "\n").trim();
+  return unquoted
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .replace(/\\r\\n/g, "\n")
+    .replace(/\\n/g, "\n")
+    .replace(/\\r/g, "\n")
+    .trim();
 }
 
 function normalizeAndValidateDkimPrivateKey(value: string): string {

@@ -58,6 +58,30 @@ describe("loadEnv", () => {
     expect(env.DKIM_PRIVATE_KEY).toBe(normalizedPemPrivateKey);
   });
 
+  it("normalizes single-quoted escaped newline DKIM private keys", () => {
+    const escapedPemPrivateKey = pemPrivateKey.replace(/\n/g, "\\n");
+
+    const env = loadEnv(
+      createBaseEnv({
+        DKIM_PRIVATE_KEY: `'${escapedPemPrivateKey}'`,
+      }),
+    );
+
+    expect(env.DKIM_PRIVATE_KEY).toBe(normalizedPemPrivateKey);
+  });
+
+  it("normalizes CRLF DKIM private keys", () => {
+    const crlfPemPrivateKey = pemPrivateKey.trim().replace(/\n/g, "\r\n");
+
+    const env = loadEnv(
+      createBaseEnv({
+        DKIM_PRIVATE_KEY: crlfPemPrivateKey,
+      }),
+    );
+
+    expect(env.DKIM_PRIVATE_KEY).toBe(normalizedPemPrivateKey);
+  });
+
   it("rejects invalid DKIM private keys at startup", () => {
     expect(() =>
       loadEnv(
